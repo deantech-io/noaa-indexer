@@ -1,0 +1,36 @@
+# Local config. The deployer replaces __NOAA_ADDRESS__ and __NOAA_BLOCK__.
+log:
+  level: debug
+  disable_sentry: true
+
+db:
+  url: postgres://noaa:noaa@postgres:5432/noaa?sslmode=disable
+
+listener:
+  addr: :8000
+
+network:
+  chain_id: 31337
+  rpc:
+    - http://anvil:8545
+  timeout: 10s
+  retries: 3
+  backoff: 1s
+
+noaa_recovery:
+  address: __NOAA_ADDRESS__
+  block: __NOAA_BLOCK__
+
+indexer:
+  poll_period: 2s
+  chunk_size: 1000
+
+finalizer:
+  period: 10s
+  mode: relayer # relayer | wallet
+  unknown_retry_after: 30m
+  relayer_url: http://mock-relayer:8080/integrations/registration-relayer/v1/register
+  relayer_timeout: 30s
+  # anvil account #2
+  wallet_private_key: 5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+  wallet_allowed_chain_ids: [31337]

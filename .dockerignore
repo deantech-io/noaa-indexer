@@ -1,0 +1,5 @@
+.git
+.claude
+contracts/out
+contracts/cache
+contracts/broadcast
