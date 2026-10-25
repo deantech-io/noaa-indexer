@@ -49,44 +49,48 @@ func Decode(l types.Log) (data.RecoveryEvent, error) {
 		return e, errors.From(errors.New("unknown event"), logan.F{"topic": l.Topics[0].Hex()})
 	}
 
-	var err error
 	switch e.Type {
 	case data.EventRequested:
-		var ev *contracts.NoAARecoveryRecoveryRequested
-		if ev, err = filterer.ParseRecoveryRequested(l); err == nil {
-			if !ev.ReadyAt.IsUint64() {
-				return e, errors.From(errors.New("readyAt out of range"), logan.F{"ready_at": ev.ReadyAt.String()})
-			}
-			e.PassportHash, e.NewIdentityKey, e.ReadyAt = data.Hash(ev.PassportHash), data.NumericFromBytes(ev.NewIdentityKey), data.Time(ev.ReadyAt.Uint64())
+		ev, err := filterer.ParseRecoveryRequested(l)
+		if err != nil {
+			return e, errors.Wrap(err, "failed to parse RecoveryRequested")
 		}
+		if !ev.ReadyAt.IsUint64() {
+			return e, errors.From(errors.New("readyAt out of range"), logan.F{"ready_at": ev.ReadyAt.String()})
+		}
+		e.PassportHash = data.Hash(ev.PassportHash)
+		e.NewIdentityKey = data.NumericFromBytes(ev.NewIdentityKey)
+		e.ReadyAt = data.Time(ev.ReadyAt.Uint64())
 	case data.EventCancelled:
-		var ev *contracts.NoAARecoveryRecoveryCancelled
-		if ev, err = filterer.ParseRecoveryCancelled(l); err == nil {
-			e.PassportHash = data.Hash(ev.PassportHash)
+		ev, err := filterer.ParseRecoveryCancelled(l)
+		if err != nil {
+			return e, errors.Wrap(err, "failed to parse RecoveryCancelled")
 		}
+		e.PassportHash = data.Hash(ev.PassportHash)
 	case data.EventContested:
-		var ev *contracts.NoAARecoveryRecoveryContested
-		if ev, err = filterer.ParseRecoveryContested(l); err == nil {
-			e.PassportHash = data.Hash(ev.PassportHash)
+		ev, err := filterer.ParseRecoveryContested(l)
+		if err != nil {
+			return e, errors.Wrap(err, "failed to parse RecoveryContested")
 		}
+		e.PassportHash = data.Hash(ev.PassportHash)
 	case data.EventFinalized:
-		var ev *contracts.NoAARecoveryRecoveryFinalized
-		if ev, err = filterer.ParseRecoveryFinalized(l); err == nil {
-			e.PassportHash = data.Hash(ev.PassportHash)
+		ev, err := filterer.ParseRecoveryFinalized(l)
+		if err != nil {
+			return e, errors.Wrap(err, "failed to parse RecoveryFinalized")
 		}
+		e.PassportHash = data.Hash(ev.PassportHash)
 	case data.EventLocked:
-		var ev *contracts.NoAARecoveryRecoveryLocked
-		if ev, err = filterer.ParseRecoveryLocked(l); err == nil {
-			e.PassportHash = data.Hash(ev.PassportHash)
+		ev, err := filterer.ParseRecoveryLocked(l)
+		if err != nil {
+			return e, errors.Wrap(err, "failed to parse RecoveryLocked")
 		}
+		e.PassportHash = data.Hash(ev.PassportHash)
 	case data.EventUnlocked:
-		var ev *contracts.NoAARecoveryRecoveryUnlocked
-		if ev, err = filterer.ParseRecoveryUnlocked(l); err == nil {
-			e.PassportHash = data.Hash(ev.PassportHash)
+		ev, err := filterer.ParseRecoveryUnlocked(l)
+		if err != nil {
+			return e, errors.Wrap(err, "failed to parse RecoveryUnlocked")
 		}
-	}
-	if err != nil {
-		return e, errors.Wrap(err, "failed to parse log", logan.F{"event": e.Type})
+		e.PassportHash = data.Hash(ev.PassportHash)
 	}
 	return e, nil
 }

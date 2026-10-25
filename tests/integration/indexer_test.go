@@ -27,7 +27,7 @@ func TestHeaderHashMatchesNode(t *testing.T) {
 		RequestsHash *common.Hash `json:"requestsHash"`
 	}
 	var header types.Header
-	for _, out := range []interface{}{&raw, &header} {
+	for _, out := range []any{&raw, &header} {
 		var msg json.RawMessage
 		if err := e.ec.Client().Call(&msg, "eth_getBlockByNumber", "latest", false); err != nil {
 			t.Fatal(err)
@@ -67,7 +67,7 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 	finalized := e.finalize()
 
 	// Small chunks force many eth_getLogs ranges.
-	cfg := e.config(map[string]interface{}{"chunk_size": 3}, nil)
+	cfg := e.config(map[string]any{"chunk_size": 3}, nil)
 	stop := runInBackground(indexer.New(cfg).Run)
 	eventually(t, 30*time.Second, func() bool { return e.checkpoint(cfg) >= finalized })
 	if err := stop(); err != nil {
@@ -113,6 +113,7 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 
 	t.Run("re-indexing is idempotent", func(t *testing.T) {
 		checkpoint := e.checkpoint(cfg)
+		// Simulates a lost checkpoint.
 		if err := cfg.DB().ExecRaw("UPDATE contract SET block_id = NULL"); err != nil {
 			t.Fatal(err)
 		}
@@ -137,6 +138,7 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 		for _, p := range []common.Hash{p1, p2, p3, p4, p5} {
 			before[p] = e.state(cfg, p)
 		}
+		// Wipes the state for rebuild to restore.
 		if err := cfg.DB().ExecRaw("UPDATE recovery_state SET old_identity_key = NULL, new_identity_key = NULL, dg_commit = NULL, " +
 			"ready_at = NULL, locked_until = NULL, is_recovery_locked = FALSE"); err != nil {
 			t.Fatal(err)

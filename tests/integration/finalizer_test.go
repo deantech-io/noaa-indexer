@@ -100,7 +100,7 @@ func TestFinalizerRelayer(t *testing.T) {
 	e := setup(t, recoveryDelay, 600)
 	url := e.startMockRelayer()
 
-	cfg := e.config(nil, map[string]interface{}{"mode": config.ModeRelayer, "relayer_url": url})
+	cfg := e.config(nil, map[string]any{"mode": config.ModeRelayer, "relayer_url": url})
 	p := passport(1)
 	e.readyAndIndexed(cfg, map[common.Hash]int64{p: 11})
 
@@ -130,7 +130,7 @@ func TestFinalizerUnknownOutcomeIsNotRetried(t *testing.T) {
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
-	cfg := e.config(nil, map[string]interface{}{
+	cfg := e.config(nil, map[string]any{
 		"mode":            config.ModeRelayer,
 		"relayer_url":     "http://" + l.Addr().String() + "/register",
 		"relayer_timeout": "300ms",
@@ -153,7 +153,7 @@ func TestFinalizerUnknownOutcomeIsNotRetried(t *testing.T) {
 	}
 
 	t.Run("expires after unknown_retry_after", func(t *testing.T) {
-		cfg := e.config(nil, map[string]interface{}{
+		cfg := e.config(nil, map[string]any{
 			"mode":                config.ModeRelayer,
 			"relayer_url":         "http://" + l.Addr().String() + "/register",
 			"relayer_timeout":     "300ms",
@@ -263,7 +263,7 @@ func TestFinalizerRetries(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cfg := e.config(nil, map[string]interface{}{
+	cfg := e.config(nil, map[string]any{
 		"mode":               config.ModeRelayer,
 		"relayer_url":        srv.URL,
 		"wallet_private_key": nil,
@@ -356,11 +356,11 @@ func TestConfigChecks(t *testing.T) {
 	e := setup(t, recoveryDelay, 600)
 
 	t.Run("chain ID mismatch", func(t *testing.T) {
-		cfg := e.configWith(map[string]map[string]interface{}{"network": {"chain_id": 1}})
+		cfg := e.configWith(map[string]map[string]any{"network": {"chain_id": 1}})
 		mustPanic(t, "rpc chain ID mismatch", func() { cfg.Network() })
 	})
 	t.Run("wallet mode on an unlisted chain", func(t *testing.T) {
-		cfg := e.config(nil, map[string]interface{}{"wallet_allowed_chain_ids": []interface{}{1}})
+		cfg := e.config(nil, map[string]any{"wallet_allowed_chain_ids": []any{1}})
 		mustPanic(t, "wallet mode is not allowed on this chain", func() { cfg.Finalizer() })
 	})
 }

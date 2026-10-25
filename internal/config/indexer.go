@@ -18,7 +18,7 @@ type Indexer struct {
 }
 
 func (c *config) Indexer() Indexer {
-	return c.indexer.Do(func() interface{} {
+	return c.indexer.Do(func() any {
 		result := Indexer{
 			PollPeriod: 5 * time.Second,
 			ChunkSize:  5000,

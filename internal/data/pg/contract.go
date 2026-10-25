@@ -20,15 +20,10 @@ func NewContractQ(db *pgdb.DB) ContractQ {
 	return ContractQ{db: db}
 }
 
-// Lock serializes writers for the chain until the transaction ends.
-func (q ContractQ) Lock(chainID uint64) error {
-	return q.db.ExecRaw("SELECT pg_advisory_xact_lock(?)", chainID)
-}
-
 func (q ContractQ) Ensure(chainID uint64, address common.Address) (int64, error) {
 	var id int64
 	err := q.db.Transaction(func() error {
-		if err := q.Lock(chainID); err != nil {
+		if err := LockChain(q.db, chainID); err != nil {
 			return err
 		}
 

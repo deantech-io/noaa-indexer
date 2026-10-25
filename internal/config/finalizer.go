@@ -39,7 +39,7 @@ type Finalizer struct {
 }
 
 func (c *config) Finalizer() Finalizer {
-	return c.finalizer.Do(func() interface{} {
+	return c.finalizer.Do(func() any {
 		result := Finalizer{
 			Period:         30 * time.Second,
 			RelayerTimeout: 30 * time.Second,

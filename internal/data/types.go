@@ -18,7 +18,7 @@ func (h Hash) Value() (driver.Value, error) {
 	return common.Hash(h).Hex(), nil
 }
 
-func (h *Hash) Scan(src interface{}) error {
+func (h *Hash) Scan(src any) error {
 	b, err := decodeHex(src, common.HashLength)
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func (n Numeric) Value() (driver.Value, error) {
 	return n.String(), nil
 }
 
-func (n *Numeric) Scan(src interface{}) error {
+func (n *Numeric) Scan(src any) error {
 	if src == nil {
 		n.Int = nil
 		return nil
@@ -96,7 +96,7 @@ func Time(unix uint64) *time.Time {
 	return &t
 }
 
-func decodeHex(src interface{}, size int) ([]byte, error) {
+func decodeHex(src any, size int) ([]byte, error) {
 	s, err := asString(src)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func decodeHex(src interface{}, size int) ([]byte, error) {
 	return b, nil
 }
 
-func asString(src interface{}) (string, error) {
+func asString(src any) (string, error) {
 	switch v := src.(type) {
 	case []byte:
 		return string(v), nil

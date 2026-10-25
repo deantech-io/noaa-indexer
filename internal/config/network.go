@@ -20,7 +20,7 @@ type Network struct {
 }
 
 func (c *config) Network() Network {
-	return c.network.Do(func() interface{} {
+	return c.network.Do(func() any {
 		cfg := struct {
 			ChainID uint64        `fig:"chain_id,required"`
 			RPC     []string      `fig:"rpc,required"`

@@ -29,12 +29,15 @@ func Expected(s data.RecoveryState, e data.RecoveryEvent) bool {
 func Apply(s data.RecoveryState, e data.RecoveryEvent) data.RecoveryState {
 	switch e.Type {
 	case data.EventRequested:
-		s.OldIdentityKey, s.NewIdentityKey, s.DGCommit, s.ReadyAt = e.OldIdentityKey, e.NewIdentityKey, e.DGCommit, e.ReadyAt
+		s.OldIdentityKey = e.OldIdentityKey
+		s.NewIdentityKey = e.NewIdentityKey
+		s.DGCommit = e.DGCommit
+		s.ReadyAt = e.ReadyAt
 	case data.EventContested, data.EventCancelled:
-		s.OldIdentityKey, s.NewIdentityKey, s.DGCommit, s.ReadyAt = data.Numeric{}, data.Numeric{}, data.Numeric{}, nil
+		s = dropRequest(s)
 		s.LockedUntil = e.LockedUntil
 	case data.EventFinalized:
-		s.OldIdentityKey, s.NewIdentityKey, s.DGCommit, s.ReadyAt = data.Numeric{}, data.Numeric{}, data.Numeric{}, nil
+		s = dropRequest(s)
 	case data.EventLocked:
 		s.IsRecoveryLocked = true
 	case data.EventUnlocked:
@@ -43,5 +46,13 @@ func Apply(s data.RecoveryState, e data.RecoveryEvent) data.RecoveryState {
 
 	s.PassportHash = e.PassportHash
 	s.RecoveryEventID = e.ID
+	return s
+}
+
+func dropRequest(s data.RecoveryState) data.RecoveryState {
+	s.OldIdentityKey = data.Numeric{}
+	s.NewIdentityKey = data.Numeric{}
+	s.DGCommit = data.Numeric{}
+	s.ReadyAt = nil
 	return s
 }

@@ -117,19 +117,19 @@ func (e *env) startAnvil() {
 	})
 }
 
-func (e *env) config(indexer, finalizer map[string]interface{}) config.Config {
-	return e.configWith(map[string]map[string]interface{}{"indexer": indexer, "finalizer": finalizer})
+func (e *env) config(indexer, finalizer map[string]any) config.Config {
+	return e.configWith(map[string]map[string]any{"indexer": indexer, "finalizer": finalizer})
 }
 
 // configWith overrides keys of the default config sections.
-func (e *env) configWith(overrides map[string]map[string]interface{}) config.Config {
-	sections := map[string]map[string]interface{}{
+func (e *env) configWith(overrides map[string]map[string]any) config.Config {
+	sections := map[string]map[string]any{
 		"log":           {"level": "warn", "disable_sentry": true},
 		"db":            {"url": e.dbURL},
-		"network":       {"chain_id": anvilChainID, "rpc": []interface{}{e.rpcURL}, "timeout": "5s", "retries": 1, "backoff": "100ms"},
+		"network":       {"chain_id": anvilChainID, "rpc": []any{e.rpcURL}, "timeout": "5s", "retries": 1, "backoff": "100ms"},
 		"noaa_recovery": {"address": e.address.Hex(), "block": e.deployBlock},
 		"indexer":       {"poll_period": "100ms", "chunk_size": 1000},
-		"finalizer":     {"period": "200ms", "mode": config.ModeWallet, "wallet_private_key": walletKey, "wallet_allowed_chain_ids": []interface{}{anvilChainID}},
+		"finalizer":     {"period": "200ms", "mode": config.ModeWallet, "wallet_private_key": walletKey, "wallet_allowed_chain_ids": []any{anvilChainID}},
 	}
 	for section, values := range overrides {
 		for k, v := range values {
@@ -137,7 +137,7 @@ func (e *env) configWith(overrides map[string]map[string]interface{}) config.Con
 		}
 	}
 
-	return config.New(kv.GetterFunc(func(key string) (map[string]interface{}, error) {
+	return config.New(kv.GetterFunc(func(key string) (map[string]any, error) {
 		return sections[key], nil
 	}))
 }
@@ -195,7 +195,7 @@ func (e *env) assertOnChain(cfg config.Config, p common.Hash) {
 	}
 }
 
-func (e *env) rpc(method string, args ...interface{}) {
+func (e *env) rpc(method string, args ...any) {
 	e.t.Helper()
 	if err := e.ec.Client().Call(nil, method, args...); err != nil {
 		e.t.Fatalf("%s: %v", method, err)

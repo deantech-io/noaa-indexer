@@ -267,7 +267,7 @@ func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *
 	stateQ := pg.NewStateQ(ix.db, ix.contractID)
 
 	err = ix.db.Transaction(func() error {
-		if err := contracts.Lock(ix.chainID); err != nil {
+		if err := pg.LockChain(ix.db, ix.chainID); err != nil {
 			return errors.Wrap(err, "failed to lock")
 		}
 
@@ -353,7 +353,7 @@ func Rebuild(cfg config.Config) error {
 
 	var passports int
 	err = db.Transaction(func() error {
-		if err := contracts.Lock(chainID); err != nil {
+		if err := pg.LockChain(db, chainID); err != nil {
 			return errors.Wrap(err, "failed to lock")
 		}
 

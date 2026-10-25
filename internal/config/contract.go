@@ -17,7 +17,7 @@ type Contract struct {
 }
 
 func (c *config) Contract() Contract {
-	return c.contract.Do(func() interface{} {
+	return c.contract.Do(func() any {
 		var result Contract
 
 		err := figure.
