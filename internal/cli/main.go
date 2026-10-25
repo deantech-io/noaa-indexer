@@ -15,6 +15,7 @@ import (
 	"github.com/rarimo/noaa-indexer/internal/service/indexer"
 	"gitlab.com/distributed_lab/kit/kv"
 	"gitlab.com/distributed_lab/logan/v3"
+	"gitlab.com/distributed_lab/logan/v3/errors"
 )
 
 func Run(args []string) bool {
@@ -61,8 +62,14 @@ func Run(args []string) bool {
 		metrics.RegisterIndexer()
 		ix := indexer.New(cfg)
 		run(func() { api.Run(ctx, cfg, ix.Healthy) })
-		// The API keeps serving after a halt so health and metrics show it.
-		run(func() { _ = ix.Run(ctx) })
+		run(func() {
+			runErr = ix.Run(ctx)
+
+			if runErr != nil && errors.Cause(runErr) != indexer.ErrParentHashMismatch {
+				log.WithError(runErr).Error("indexer stopped")
+				stop()
+			}
+		})
 	case finalizerCmd.FullCommand():
 		metrics.RegisterFinalizer()
 		f := finalizer.New(cfg)

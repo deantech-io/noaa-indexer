@@ -4,6 +4,7 @@ name: noaa-indexer
 x-app: &app
   build: .
   image: noaa-indexer:local
+  restart: on-failure
   environment:
     KV_VIPER_FILE: /shared/config.yaml
   volumes:
@@ -29,7 +30,8 @@ services:
     ports:
       - "8545:8545"
     healthcheck:
-      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      test:
+        ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
       interval: 2s
       retries: 30
 
@@ -86,7 +88,12 @@ services:
       context: .
       target: mockrelayer
     image: noaa-mockrelayer:local
-    entrypoint: ["/bin/sh", "-c", ". /shared/deploy.env && MOCK_RELAYER_WHITELIST=$$NOAA_ADDRESS exec mockrelayer"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        ". /shared/deploy.env && MOCK_RELAYER_WHITELIST=$$NOAA_ADDRESS exec mockrelayer",
+      ]
     environment:
       MOCK_RELAYER_ADDR: ":8080"
       MOCK_RELAYER_RPC: http://anvil:8545
