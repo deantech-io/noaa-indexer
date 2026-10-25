@@ -76,3 +76,39 @@ func TestApply(t *testing.T) {
 		})
 	}
 }
+
+func TestExpected(t *testing.T) {
+	tests := []struct {
+		name   string
+		before []data.RecoveryEvent
+		event  data.RecoveryEvent
+		want   bool
+	}{
+		{"request", nil, requested(7, 100), true},
+		{"request while pending", []data.RecoveryEvent{requested(7, 100)}, requested(8, 100), false},
+		{"request while locked", []data.RecoveryEvent{ev(data.EventLocked)}, requested(7, 100), false},
+		{"request after contest", []data.RecoveryEvent{requested(7, 100), contested(500)}, requested(9, 600), true},
+		{"contest", []data.RecoveryEvent{requested(7, 100)}, contested(500), true},
+		{"contest without request", nil, contested(500), false},
+		{"finalize", []data.RecoveryEvent{requested(7, 100)}, ev(data.EventFinalized), true},
+		{"finalize without request", nil, ev(data.EventFinalized), false},
+		{"finalize while locked", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked)}, ev(data.EventFinalized), false},
+		{"cancel while locked", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked)}, ev(data.EventCancelled), true},
+		{"cancel without request", nil, ev(data.EventCancelled), false},
+		{"lock twice", []data.RecoveryEvent{ev(data.EventLocked)}, ev(data.EventLocked), false},
+		{"unlock", []data.RecoveryEvent{ev(data.EventLocked)}, ev(data.EventUnlocked), true},
+		{"unlock without lock", nil, ev(data.EventUnlocked), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var s data.RecoveryState
+			for _, e := range tt.before {
+				s = Apply(s, e)
+			}
+			if got := Expected(s, tt.event); got != tt.want {
+				t.Errorf("Expected = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

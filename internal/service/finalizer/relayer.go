@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"gitlab.com/distributed_lab/logan/v3"
 	"gitlab.com/distributed_lab/logan/v3/errors"
 )
 
@@ -29,7 +29,6 @@ type relayerRequest struct {
 	Data struct {
 		TxData      string `json:"tx_data"`
 		Destination string `json:"destination"`
-		NoSend      bool   `json:"no_send"`
 	} `json:"data"`
 }
 
@@ -60,32 +59,33 @@ func (r relayer) submit(ctx context.Context, calldata []byte) (common.Hash, erro
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		// Keep the relayer URL out of logs and the database.
-		if uerr, ok := err.(*url.Error); ok {
-			err = uerr.Err
+		// Transport errors carry the relayer URL and IPs.
+		if uerr, ok := err.(*url.Error); ok && uerr.Timeout() {
+			return common.Hash{}, errors.New("relayer request timed out")
 		}
-		return common.Hash{}, errors.Wrap(err, "relayer request failed")
+		return common.Hash{}, errors.New("relayer request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
+	// The body carries the revert reason, so it is kept in the error.
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	fields := logan.F{"status": resp.StatusCode, "body": string(respBody)}
+	detail := fmt.Sprintf("status %d: %s", resp.StatusCode, respBody)
 
 	// The relayer returns 4xx before signing.
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		return common.Hash{}, errors.Wrap(errRejected, "relayer rejected request", fields)
+		return common.Hash{}, errors.Wrap(errRejected, "relayer rejected request: "+detail)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return common.Hash{}, errors.From(errors.New("unexpected relayer response"), fields)
+		return common.Hash{}, errors.New("unexpected relayer response: " + detail)
 	}
 
 	var parsed relayerResponse
 	if err = json.Unmarshal(respBody, &parsed); err != nil {
-		return common.Hash{}, errors.Wrap(err, "failed to decode relayer response", fields)
+		return common.Hash{}, errors.Wrap(err, "failed to decode relayer response: "+detail)
 	}
 	hash, err := hexutil.Decode(parsed.Data.Attributes.TxHash)
 	if err != nil || len(hash) != common.HashLength {
-		return common.Hash{}, errors.From(errors.New("invalid tx hash in relayer response"), fields)
+		return common.Hash{}, errors.New("invalid tx hash in relayer response: " + detail)
 	}
 	return common.BytesToHash(hash), nil
 }

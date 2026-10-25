@@ -5,15 +5,17 @@ WORKDIR /go/src/github.com/rarimo/noaa-indexer
 COPY . .
 
 RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/noaa-indexer /go/src/github.com/rarimo/noaa-indexer
-RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/mockrelayer /go/src/github.com/rarimo/noaa-indexer/devtools/mockrelayer
 
 # Local development only (see compose.yaml).
+FROM buildbase AS mockrelayer-build
+RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/mockrelayer /go/src/github.com/rarimo/noaa-indexer/devtools/mockrelayer
+
 FROM scratch AS mockrelayer
 COPY --from=alpine:3.9 /bin/sh /bin/sh
 COPY --from=alpine:3.9 /usr /usr
 COPY --from=alpine:3.9 /lib /lib
 
-COPY --from=buildbase /usr/local/bin/mockrelayer /usr/local/bin/mockrelayer
+COPY --from=mockrelayer-build /usr/local/bin/mockrelayer /usr/local/bin/mockrelayer
 
 ENTRYPOINT ["mockrelayer"]
 

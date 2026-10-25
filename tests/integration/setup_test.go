@@ -118,6 +118,11 @@ func (e *env) startAnvil() {
 }
 
 func (e *env) config(indexer, finalizer map[string]interface{}) config.Config {
+	return e.configWith(map[string]map[string]interface{}{"indexer": indexer, "finalizer": finalizer})
+}
+
+// configWith overrides keys of the default config sections.
+func (e *env) configWith(overrides map[string]map[string]interface{}) config.Config {
 	sections := map[string]map[string]interface{}{
 		"log":           {"level": "warn", "disable_sentry": true},
 		"db":            {"url": e.dbURL},
@@ -126,11 +131,10 @@ func (e *env) config(indexer, finalizer map[string]interface{}) config.Config {
 		"indexer":       {"poll_period": "100ms", "chunk_size": 1000},
 		"finalizer":     {"period": "200ms", "mode": config.ModeWallet, "wallet_private_key": walletKey, "wallet_allowed_chain_ids": []interface{}{anvilChainID}},
 	}
-	for k, v := range indexer {
-		sections["indexer"][k] = v
-	}
-	for k, v := range finalizer {
-		sections["finalizer"][k] = v
+	for section, values := range overrides {
+		for k, v := range values {
+			sections[section][k] = v
+		}
 	}
 
 	return config.New(kv.GetterFunc(func(key string) (map[string]interface{}, error) {

@@ -22,6 +22,10 @@ var (
 		Name: "noaa_indexer_events_total",
 		Help: "Indexed events by type.",
 	}, []string{"type"})
+	UnexpectedTransitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "noaa_indexer_unexpected_transitions_total",
+		Help: "Events the contract should not have emitted in the indexed state, by type.",
+	}, []string{"type"})
 	Halted = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "noaa_indexer_halted",
 		Help: "1 if the indexer stopped on a parent hash mismatch.",
@@ -31,16 +35,20 @@ var (
 		Name: "noaa_finalizer_submissions_total",
 		Help: "Finalizer submission outcomes.",
 	}, []string{"outcome"})
+	ExhaustedRequests = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "noaa_finalizer_exhausted_requests_total",
+		Help: "Requests that reached max_attempts and are no longer retried.",
+	})
 	UnknownSubmissions = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "noaa_finalizer_unknown_submissions",
-		Help: "Submissions whose outcome is unknown; they block further attempts for their passport.",
+		Help: "Submissions whose outcome is unknown; each blocks further attempts for its passport.",
 	})
 )
 
 func RegisterIndexer() {
-	prometheus.MustRegister(IndexedBlock, HeadBlock, LagBlocks, Events, Halted)
+	prometheus.MustRegister(IndexedBlock, HeadBlock, LagBlocks, Events, UnexpectedTransitions, Halted)
 }
 
 func RegisterFinalizer() {
-	prometheus.MustRegister(Submissions, UnknownSubmissions)
+	prometheus.MustRegister(Submissions, ExhaustedRequests, UnknownSubmissions)
 }

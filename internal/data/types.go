@@ -49,7 +49,7 @@ func (n Numeric) Value() (driver.Value, error) {
 	if n.Int == nil {
 		return nil, nil
 	}
-	return n.Int.String(), nil
+	return n.String(), nil
 }
 
 func (n *Numeric) Scan(src interface{}) error {
@@ -71,7 +71,7 @@ func (n *Numeric) Scan(src interface{}) error {
 }
 
 func (n Numeric) IsZero() bool {
-	return n.Int == nil || n.Int.Sign() == 0
+	return n.Int == nil || n.Sign() == 0
 }
 
 // Equal treats nil as 0.
@@ -79,7 +79,7 @@ func (n Numeric) Equal(other Numeric) bool {
 	if n.IsZero() || other.IsZero() {
 		return n.IsZero() == other.IsZero()
 	}
-	return n.Int.Cmp(other.Int) == 0
+	return n.Cmp(other.Int) == 0
 }
 
 // Time converts unix seconds to UTC. 0 means none.

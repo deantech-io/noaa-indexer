@@ -20,6 +20,7 @@ import (
 	"gitlab.com/distributed_lab/kit/pgdb"
 	"gitlab.com/distributed_lab/logan/v3"
 	"gitlab.com/distributed_lab/logan/v3/errors"
+	"gitlab.com/distributed_lab/running"
 )
 
 const serviceName = "indexer"
@@ -69,29 +70,35 @@ func (ix *Indexer) Run(ctx context.Context) error {
 		return errors.Wrap(err, "failed to ensure contract")
 	}
 
-	ix.log.Info("indexer started")
-	for {
-		caughtUp, err := ix.step(ctx)
-		switch {
-		case errors.Cause(err) == ErrParentHashMismatch:
-			ix.halted.Store(true)
-			metrics.Halted.Set(1)
-			ix.log.WithError(err).Error("indexer stopped: checkpoint block is not on chain")
-			return err
-		case ctx.Err() != nil:
-			return nil
-		case err != nil:
-			ix.log.WithError(err).Error("failed to index")
-		case !caughtUp:
-			continue
-		}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(ix.cfg.PollPeriod):
+	var halt error
+	ix.log.Info("indexer started")
+	running.WithBackOff(ctx, ix.log, serviceName, func(ctx context.Context) error {
+		err := ix.catchUp(ctx)
+		if errors.Cause(err) != ErrParentHashMismatch {
+			return err
+		}
+		halt = err
+		ix.halted.Store(true)
+		metrics.Halted.Set(1)
+		ix.log.WithError(err).Error("indexer stopped: checkpoint block is not on chain")
+		cancel()
+		return nil
+	}, ix.cfg.PollPeriod, ix.cfg.PollPeriod, 10*ix.cfg.PollPeriod)
+	return halt
+}
+
+// catchUp indexes ranges until it reaches the finalized block.
+func (ix *Indexer) catchUp(ctx context.Context) error {
+	for ctx.Err() == nil {
+		caughtUp, err := ix.step(ctx)
+		if err != nil || caughtUp {
+			return err
 		}
 	}
+	return nil
 }
 
 // step indexes one range and reports whether it reached the finalized block.
@@ -113,7 +120,9 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 	})
 	if err != nil {
 		// Providers reject ranges that are too wide or return too many logs.
-		ix.chunk = max(1, ix.chunk/2)
+		if _, ok := err.(rpc.Error); ok {
+			ix.chunk = max(1, ix.chunk/2)
+		}
 		return false, errors.Wrap(err, "failed to read range", logan.F{"from": from})
 	}
 	ix.chunk = min(ix.cfg.ChunkSize, ix.chunk*2)
@@ -144,8 +153,18 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 	}
 
 	to := r.last.Number.Uint64()
-	if err = ix.save(cp, events, r.last); err != nil {
+	unexpected, err := ix.save(cp, events, r.last)
+	if err != nil {
 		return false, errors.Wrap(err, "failed to save range", logan.F{"from": from, "to": to})
+	}
+
+	for _, e := range unexpected {
+		ix.log.WithFields(logan.F{
+			"passport_hash": e.PassportHash.Hex(),
+			"event_type":    e.Type,
+			"tx_hash":       e.TxHash.Hex(),
+		}).Warn("unexpected transition")
+		metrics.UnexpectedTransitions.WithLabelValues(string(e.Type)).Inc()
 	}
 
 	for _, e := range events {
@@ -209,13 +228,15 @@ func (ix *Indexer) read(ctx context.Context, ec *ethclient.Client, from uint64) 
 }
 
 // save stores events, updates state and moves the checkpoint in one transaction.
-func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *types.Header) error {
+// It returns the new events the contract should not have emitted in the stored state.
+func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *types.Header) ([]data.RecoveryEvent, error) {
 	contracts := pg.NewContractQ(ix.db)
 	blocks := pg.NewBlockQ(ix.db, ix.chainID)
 	eventsQ := pg.NewEventsQ(ix.db, ix.chainID, ix.contractID)
 	stateQ := pg.NewStateQ(ix.db, ix.contractID)
 
-	return ix.db.Transaction(func() error {
+	var unexpected []data.RecoveryEvent
+	err := ix.db.Transaction(func() error {
 		if err := contracts.Lock(ix.chainID); err != nil {
 			return errors.Wrap(err, "failed to lock")
 		}
@@ -236,6 +257,9 @@ func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *
 			}
 			if state == nil {
 				state = &data.RecoveryState{}
+			}
+			if !recovery.Expected(*state, e) {
+				unexpected = append(unexpected, e)
 			}
 			if err = stateQ.Save(recovery.Apply(*state, e)); err != nil {
 				return errors.Wrap(err, "failed to save state")
@@ -259,6 +283,7 @@ func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *
 		}
 		return nil
 	})
+	return unexpected, err
 }
 
 // head returns 0 on error: it only feeds the lag metric.

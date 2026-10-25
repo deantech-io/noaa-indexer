@@ -23,7 +23,7 @@ noaa-indexer migrate up|down
 noaa-indexer rebuild           # recompute recovery_state from recovery_event
 ```
 
-The config file is passed via `KV_VIPER_FILE`, as in other Rarimo services.
+The config file is passed via `KV_VIPER_FILE`.
 
 ## Config
 
@@ -59,9 +59,12 @@ finalizer:
   period: 30s
   mode: relayer          # relayer | wallet
   unknown_retry_after: 0 # retry after an unknown outcome or dropped tx; 0 = never
+  retry_base: 1m         # backoff after a failed, rejected or expired attempt, doubled each time
+  retry_max: 1h
+  max_attempts: 5        # attempts per request, then it is no longer retried
   relayer_url: https://.../integrations/registration-relayer/v1/register
   relayer_timeout: 30s
-  wallet_private_key: "" # wallet mode only
+  wallet_private_key:    # wallet mode only
   wallet_allowed_chain_ids: []  # wallet mode refuses to start on other chains
 ```
 
@@ -75,7 +78,8 @@ checkpoint with chunked `eth_getLogs`. In one transaction it stores the new even
 `recovery_state` and moves the checkpoint. Events that are already stored are skipped. Before each
 range it checks that the next block's parent hash equals the checkpoint hash. On a mismatch the
 indexer stops: `noaa_indexer_halted` becomes 1, `/health` returns 503, and there is no automatic
-recovery.
+recovery. Events the contract should not have emitted in the stored state are logged as warnings
+and counted in `noaa_indexer_unexpected_transitions_total{type}`; indexing continues.
 
 **State.** `recovery_state.status` is one of `pending`, `contested`, `locked`, `active`. A contest
 lock expires with time, so readers should use `effective_status` from the
@@ -84,8 +88,11 @@ unlock (provisional).
 
 **Finalizer.** Every period it takes `pending` rows with `ready_at` at or before the latest block
 time, re-checks `requests()` and `lockedUntil()` on chain, and submits `finalizeRecovery`. Each
-attempt is a `finalizer_submission` row for the request event, and a unique index allows one
-blocking attempt per request.
+attempt is a `finalizer_submission` row for the request event. A unique index allows one
+blocking attempt per request, and a passport has at most one open (`submitting`, `submitted`,
+`unknown`) attempt. After a `failed`, `rejected` or `expired` attempt the request is retried with
+exponential backoff from `retry_base` to `retry_max`. After `max_attempts` it is logged at error
+level, counted in `noaa_finalizer_exhausted_requests_total` and no longer retried.
 
 | status | meaning | blocks another attempt |
 |---|---|---|
@@ -115,8 +122,9 @@ enums. Rows are never deleted; every table has `is_active`.
 ## Metrics
 
 `noaa_indexer_indexed_block`, `noaa_indexer_head_block`, `noaa_indexer_lag_blocks`,
-`noaa_indexer_events_total{type}`, `noaa_indexer_halted`,
-`noaa_finalizer_submissions_total{outcome}`, `noaa_finalizer_unknown_submissions`.
+`noaa_indexer_events_total{type}`, `noaa_indexer_unexpected_transitions_total{type}`,
+`noaa_indexer_halted`, `noaa_finalizer_submissions_total{outcome}`,
+`noaa_finalizer_exhausted_requests_total`, `noaa_finalizer_unknown_submissions`.
 
 Hourly rates: `increase(noaa_indexer_events_total{type="requested"}[1h])`, same with
 `type="contested"`. Note that the counters also count events found during a backfill.
@@ -177,7 +185,8 @@ docker compose exec postgres psql -U noaa -c "select * from recovery_state_effec
 docker compose exec postgres psql -U noaa -c "select * from finalizer_submission"
 ```
 
-To try wallet mode, set `finalizer.mode: wallet` in `docker/config.template.yaml`.
+To try wallet mode, set `finalizer.mode: wallet` and `wallet_private_key` in
+`docker/config.template.yaml`.
 
 ### Tests
 
@@ -190,7 +199,9 @@ TEST_DB_URL=postgres://user@host:port/db?sslmode=disable \
 Integration tests start their own `anvil` (must be in `PATH`) and reset the schema of the given
 database. They cover backfill, restart from checkpoint, idempotent re-indexing, rebuild, the
 parent-hash halt, the header-hash check for Prague headers, and the finalizer (wallet and relayer
-mode, state changed before submit, unknown outcome not retried).
+mode, state changed before submit, unknown outcome not retried, relayer rejection, retry backoff
+and attempt cap, one open attempt per passport), config checks (chain ID mismatch, wallet mode on
+an unlisted chain) and RPC errors without endpoint URLs.
 
 Regenerating bindings: `go generate ./internal/contracts/` (provisional ABI) and
 `go generate ./tests/integration/mock/` (mock with bytecode, needs `forge`).

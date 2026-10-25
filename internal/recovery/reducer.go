@@ -4,6 +4,25 @@ import (
 	"github.com/rarimo/noaa-indexer/internal/data"
 )
 
+// Expected reports whether the contract allows e in state s.
+func Expected(s data.RecoveryState, e data.RecoveryEvent) bool {
+	locked, pending := s.Status == data.StatusLocked, !s.NewIdentityKey.IsZero()
+
+	switch e.Type {
+	case data.EventRequested:
+		return !locked && !pending
+	case data.EventContested, data.EventFinalized:
+		return !locked && pending
+	case data.EventCancelled:
+		return pending
+	case data.EventLocked:
+		return !locked
+	case data.EventUnlocked:
+		return locked
+	}
+	return false
+}
+
 // Apply returns the state after e. Events must be applied in chain order.
 //
 // TODO(real ABI): PROVISIONAL - a lock keeps the pending request and blocks its finalization.

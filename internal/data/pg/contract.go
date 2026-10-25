@@ -6,7 +6,6 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/lib/pq"
 	"github.com/rarimo/noaa-indexer/internal/data"
 	"gitlab.com/distributed_lab/kit/pgdb"
 )
@@ -71,9 +70,4 @@ func (q ContractQ) SetCheckpoint(contractID int64, prev *int64, blockID int64) (
 		return false, nil
 	}
 	return err == nil, err
-}
-
-func isUniqueViolation(err error) bool {
-	var pqErr *pq.Error
-	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }

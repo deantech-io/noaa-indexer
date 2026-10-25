@@ -3,6 +3,7 @@ package finalizer
 import (
 	"context"
 	"math/big"
+	"slices"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -20,12 +21,15 @@ import (
 	"gitlab.com/distributed_lab/kit/pgdb"
 	"gitlab.com/distributed_lab/logan/v3"
 	"gitlab.com/distributed_lab/logan/v3/errors"
+	"gitlab.com/distributed_lab/running"
 )
 
 const serviceName = "finalizer"
 
 // errRejected means nothing was sent, so the request may be retried.
 var errRejected = errors.New("rejected before sending")
+
+var retryable = []data.SubmissionStatus{data.SubmissionFailed, data.SubmissionRejected, data.SubmissionExpired}
 
 type submitter interface {
 	submit(ctx context.Context, calldata []byte) (common.Hash, error)
@@ -98,17 +102,8 @@ func (f *Finalizer) Run(ctx context.Context) error {
 		f.markUnknown(s.ID, s.PassportHash, errors.New("interrupted while submitting"))
 	}
 
-	for {
-		if err := f.tick(ctx); err != nil && ctx.Err() == nil {
-			f.log.WithError(err).Error("finalizer tick failed")
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(f.cfg.Period):
-		}
-	}
+	running.WithBackOff(ctx, f.log, serviceName, f.tick, f.cfg.Period, f.cfg.Period, 10*f.cfg.Period)
+	return nil
 }
 
 func (f *Finalizer) tick(ctx context.Context) error {
@@ -151,11 +146,11 @@ func (f *Finalizer) finalize(ctx context.Context, s data.RecoveryState, now time
 		return errors.New("pending state without request event")
 	}
 
-	blocked, err := f.submissions.Blocked(request.ID)
+	attempts, err := f.submissions.SelectByRequest(request.ID)
 	if err != nil {
-		return errors.Wrap(err, "failed to check submissions")
+		return errors.Wrap(err, "failed to select attempts")
 	}
-	if blocked {
+	if !f.due(attempts) {
 		return nil
 	}
 
@@ -175,7 +170,7 @@ func (f *Finalizer) finalize(ctx context.Context, s data.RecoveryState, now time
 		return errors.Wrap(err, "failed to pack calldata")
 	}
 
-	id, err := f.submissions.Claim(request.ID)
+	id, err := f.submissions.Claim(request.ID, s.PassportHash)
 	if err != nil {
 		return errors.Wrap(err, "failed to claim submission")
 	}
@@ -199,7 +194,7 @@ func (f *Finalizer) finalize(ctx context.Context, s data.RecoveryState, now time
 		}
 		log.WithError(err).Warn("finalization rejected")
 		metrics.Submissions.WithLabelValues(string(data.SubmissionRejected)).Inc()
-		return nil
+		return f.checkExhausted(log, request.ID)
 	default:
 		f.markUnknown(id, s.PassportHash, err)
 		return nil
@@ -263,6 +258,11 @@ func (f *Finalizer) track(ctx context.Context) error {
 				}
 				log.WithField("tx_hash", s.TxHash.Hex()).Infof("finalization %s", status)
 				metrics.Submissions.WithLabelValues(string(status)).Inc()
+				if status == data.SubmissionFailed {
+					if err = f.checkExhausted(log, s.RecoveryEventID); err != nil {
+						return err
+					}
+				}
 				continue
 			case errors.Cause(err) != ethereum.NotFound:
 				return errors.Wrap(err, "failed to get receipt", logan.F{"tx_hash": s.TxHash.Hex()})
@@ -288,6 +288,9 @@ func (f *Finalizer) track(ctx context.Context) error {
 				return err
 			}
 			log.Warn("submission expired, allowing a new attempt")
+			if err = f.checkExhausted(log, s.RecoveryEventID); err != nil {
+				return err
+			}
 			continue
 		}
 		if s.Status == data.SubmissionUnknown {
@@ -296,6 +299,42 @@ func (f *Finalizer) track(ctx context.Context) error {
 	}
 
 	metrics.UnknownSubmissions.Set(float64(unknown))
+	return nil
+}
+
+// due reports whether the request may be attempted now, given its previous attempts.
+func (f *Finalizer) due(attempts []data.Submission) bool {
+	for _, a := range attempts {
+		if !slices.Contains(retryable, a.Status) {
+			return false
+		}
+	}
+
+	n := len(attempts)
+	if n == 0 {
+		return true
+	}
+	if n >= f.cfg.MaxAttempts {
+		return false
+	}
+
+	backoff := f.cfg.RetryBase
+	for i := 1; i < n && backoff < f.cfg.RetryMax; i++ {
+		backoff *= 2
+	}
+	return time.Since(attempts[n-1].UpdatedAt) >= min(backoff, f.cfg.RetryMax)
+}
+
+// checkExhausted reports the request once its last allowed attempt has failed.
+func (f *Finalizer) checkExhausted(log *logan.Entry, requestID int64) error {
+	attempts, err := f.submissions.SelectByRequest(requestID)
+	if err != nil {
+		return errors.Wrap(err, "failed to select attempts")
+	}
+	if len(attempts) >= f.cfg.MaxAttempts {
+		log.WithField("attempts", len(attempts)).Error("finalization attempts exhausted, request will not be retried")
+		metrics.ExhaustedRequests.Inc()
+	}
 	return nil
 }
 

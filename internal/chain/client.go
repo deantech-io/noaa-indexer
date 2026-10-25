@@ -3,6 +3,8 @@ package chain
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
@@ -20,10 +22,10 @@ type Client struct {
 
 func Dial(urls []string, timeout time.Duration, retries int, backoff time.Duration) (*Client, error) {
 	c := &Client{timeout: timeout, retries: retries, backoff: backoff}
-	for _, url := range urls {
+	for i, url := range urls {
 		ec, err := ethclient.Dial(url)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("rpc[%d]: invalid endpoint", i)
 		}
 		c.endpoints = append(c.endpoints, ec)
 	}
@@ -48,19 +50,33 @@ func (c *Client) Do(ctx context.Context, f func(ctx context.Context, ec *ethclie
 			backoff *= 2
 		}
 
-		for _, ec := range c.endpoints {
-			if err = c.call(ctx, ec, f); err == nil || isFinal(err) || ctx.Err() != nil {
+		for i, ec := range c.endpoints {
+			if err = c.call(ctx, i, ec, f); err == nil || isFinal(err) {
 				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 		}
 	}
 	return err
 }
 
-func (c *Client) call(ctx context.Context, ec *ethclient.Client, f func(context.Context, *ethclient.Client) error) error {
+// call replaces transport errors: they carry the endpoint URL, which may hold an API key, and IPs.
+func (c *Client) call(ctx context.Context, i int, ec *ethclient.Client, f func(context.Context, *ethclient.Client) error) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	return f(ctx, ec)
+
+	err := f(ctx, ec)
+	var netErr net.Error
+	switch {
+	case !errors.As(err, &netErr):
+		return err
+	case netErr.Timeout():
+		return fmt.Errorf("rpc[%d]: request timed out", i)
+	default:
+		return fmt.Errorf("rpc[%d]: request failed", i)
+	}
 }
 
 func isFinal(err error) bool {

@@ -7,17 +7,22 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/rarimo/noaa-indexer/internal/config"
 	"github.com/rarimo/noaa-indexer/internal/data"
 	"github.com/rarimo/noaa-indexer/internal/data/pg"
+	"github.com/rarimo/noaa-indexer/internal/metrics"
 	"github.com/rarimo/noaa-indexer/internal/service/finalizer"
 	"github.com/rarimo/noaa-indexer/internal/service/indexer"
 )
@@ -144,8 +149,8 @@ func TestFinalizerUnknownOutcomeIsNotRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if subs := e.submissions(cfg); len(subs) != 1 || subs[0].Status != data.SubmissionUnknown {
-		t.Errorf("submissions = %+v, want a single unknown one", subs)
+	if subs := e.submissions(cfg); len(subs) != 1 || subs[0].Status != data.SubmissionUnknown || subs[0].Error != "relayer request timed out" {
+		t.Errorf("submissions = %+v, want a single unknown one without the relayer URL", subs)
 	}
 
 	t.Run("expires after unknown_retry_after", func(t *testing.T) {
@@ -154,6 +159,7 @@ func TestFinalizerUnknownOutcomeIsNotRetried(t *testing.T) {
 			"relayer_url":         "http://" + l.Addr().String() + "/register",
 			"relayer_timeout":     "300ms",
 			"unknown_retry_after": "10s",
+			"retry_base":          "1s",
 		})
 
 		stop := runInBackground(finalizer.New(cfg).Run)
@@ -219,7 +225,7 @@ func TestSubmissionConditionalUpdate(t *testing.T) {
 	e.readyAndIndexed(cfg, map[common.Hash]int64{passport(1): 11})
 
 	subs := pg.NewSubmissionsQ(cfg.DB(), e.contractID(cfg))
-	id, err := subs.Claim(e.events(cfg)[0].ID)
+	id, err := subs.Claim(e.events(cfg)[0].ID, data.Hash(passport(1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,4 +252,135 @@ func TestSubmissionConditionalUpdate(t *testing.T) {
 	if got := e.submissions(cfg); len(got) != 1 || got[0].Status != data.SubmissionSubmitted {
 		t.Errorf("submissions = %+v, want a single submitted one", got)
 	}
+}
+
+func TestFinalizerRetries(t *testing.T) {
+	e := setup(t, recoveryDelay, 600)
+
+	const reason = "execution reverted: not ready"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"errors":[{"title":%q}]}`, reason)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := e.config(nil, map[string]interface{}{
+		"mode":               config.ModeRelayer,
+		"relayer_url":        srv.URL,
+		"wallet_private_key": nil,
+		"retry_base":         "1s",
+		"retry_max":          "2s",
+		"max_attempts":       3,
+	})
+	e.readyAndIndexed(cfg, map[common.Hash]int64{passport(1): 11})
+	exhausted := counterValue(t, metrics.ExhaustedRequests)
+
+	stop := runInBackground(finalizer.New(cfg).Run)
+	defer func() { _ = stop() }()
+
+	eventually(t, 10*time.Second, func() bool { return len(e.submissions(cfg)) == 1 })
+	time.Sleep(500 * time.Millisecond)
+	subs := e.submissions(cfg)
+	if len(subs) != 1 || subs[0].Status != data.SubmissionRejected || !strings.Contains(subs[0].Error, reason) {
+		t.Fatalf("submissions = %+v, want one rejected with the revert reason, no retry before retry_base", subs)
+	}
+
+	eventually(t, 15*time.Second, func() bool { return len(e.submissions(cfg)) == 3 })
+	// The backoff alone would allow a fourth attempt after 2s.
+	time.Sleep(3 * time.Second)
+	subs = e.submissions(cfg)
+	if len(subs) != 3 {
+		t.Fatalf("submissions = %d, want 3 (max_attempts)", len(subs))
+	}
+	for i, want := range []time.Duration{time.Second, 2 * time.Second} {
+		if gap := subs[i+1].UpdatedAt.Sub(subs[i].UpdatedAt); gap < want {
+			t.Errorf("gap before attempt %d = %s, want at least %s", i+2, gap, want)
+		}
+	}
+	if got := counterValue(t, metrics.ExhaustedRequests) - exhausted; got != 1 {
+		t.Errorf("exhausted requests = %v, want 1", got)
+	}
+}
+
+func TestOneOpenSubmissionPerPassport(t *testing.T) {
+	e := setup(t, recoveryDelay, 600)
+	cfg := e.config(nil, nil)
+	p := passport(1)
+
+	e.send(e.contract.RequestRecovery(e.auth, p, big.NewInt(11)))
+	e.send(e.contract.CancelRecovery(e.auth, p))
+	e.send(e.contract.RequestRecovery(e.auth, p, big.NewInt(12)))
+	e.readyAndIndexed(cfg, nil)
+
+	var requests []int64
+	for _, ev := range e.events(cfg) {
+		if ev.Type == data.EventRequested {
+			requests = append(requests, ev.ID)
+		}
+	}
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(requests))
+	}
+
+	subs := pg.NewSubmissionsQ(cfg.DB(), e.contractID(cfg))
+	claim := func(request int64) int64 {
+		id, err := subs.Claim(request, data.Hash(p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	update := func(id int64, to, from data.SubmissionStatus) {
+		if ok, err := subs.Update(id, to, nil, "", from); err != nil || !ok {
+			t.Fatalf("Update(%d, %s) = %t, %v", id, to, ok, err)
+		}
+	}
+
+	first := claim(requests[0])
+	if first == 0 {
+		t.Fatal("first claim refused")
+	}
+	if claim(requests[1]) != 0 {
+		t.Error("claimed while another request of the passport is submitting")
+	}
+	update(first, data.SubmissionUnknown, data.SubmissionSubmitting)
+	if claim(requests[1]) != 0 {
+		t.Error("claimed while another request of the passport is unknown")
+	}
+	update(first, data.SubmissionExpired, data.SubmissionUnknown)
+	if claim(requests[1]) == 0 {
+		t.Error("claim refused after the other attempt expired")
+	}
+}
+
+func TestConfigChecks(t *testing.T) {
+	e := setup(t, recoveryDelay, 600)
+
+	t.Run("chain ID mismatch", func(t *testing.T) {
+		cfg := e.configWith(map[string]map[string]interface{}{"network": {"chain_id": 1}})
+		mustPanic(t, "rpc chain ID mismatch", func() { cfg.Network() })
+	})
+	t.Run("wallet mode on an unlisted chain", func(t *testing.T) {
+		cfg := e.config(nil, map[string]interface{}{"wallet_allowed_chain_ids": []interface{}{1}})
+		mustPanic(t, "wallet mode is not allowed on this chain", func() { cfg.Finalizer() })
+	})
+}
+
+func mustPanic(t *testing.T, want string, f func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), want) {
+			t.Errorf("panic = %v, want %q", r, want)
+		}
+	}()
+	f()
+}
+
+func counterValue(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	return m.GetCounter().GetValue()
 }

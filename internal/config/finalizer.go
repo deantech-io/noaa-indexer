@@ -24,6 +24,11 @@ type Finalizer struct {
 	// UnknownRetryAfter allows a new attempt after an unknown outcome or a dropped transaction.
 	// 0 never retries.
 	UnknownRetryAfter time.Duration `fig:"unknown_retry_after"`
+	// A request is retried after a failed, rejected or expired attempt with exponential backoff
+	// from RetryBase up to RetryMax, at most MaxAttempts times in total.
+	RetryBase   time.Duration `fig:"retry_base"`
+	RetryMax    time.Duration `fig:"retry_max"`
+	MaxAttempts int           `fig:"max_attempts"`
 
 	RelayerURL     string        `fig:"relayer_url"`
 	RelayerTimeout time.Duration `fig:"relayer_timeout"`
@@ -38,6 +43,9 @@ func (c *config) Finalizer() Finalizer {
 		result := Finalizer{
 			Period:         30 * time.Second,
 			RelayerTimeout: 30 * time.Second,
+			RetryBase:      time.Minute,
+			RetryMax:       time.Hour,
+			MaxAttempts:    5,
 		}
 
 		err := figure.
@@ -51,6 +59,9 @@ func (c *config) Finalizer() Finalizer {
 
 		if result.Period <= 0 || result.RelayerTimeout <= 0 || result.UnknownRetryAfter < 0 {
 			panic(errors.From(errors.New("period and relayer_timeout must be positive"), logan.F{"key": finalizerYamlKey}))
+		}
+		if result.RetryBase <= 0 || result.RetryMax < result.RetryBase || result.MaxAttempts <= 0 {
+			panic(errors.From(errors.New("retry_base and max_attempts must be positive, retry_max not below retry_base"), logan.F{"key": finalizerYamlKey}))
 		}
 
 		switch result.Mode {

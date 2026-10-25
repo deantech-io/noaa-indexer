@@ -29,8 +29,11 @@ finalizer:
   period: 10s
   mode: relayer # relayer | wallet
   unknown_retry_after: 30m
+  retry_base: 1m
+  retry_max: 1h
+  max_attempts: 5
   relayer_url: http://mock-relayer:8080/integrations/registration-relayer/v1/register
   relayer_timeout: 30s
-  # anvil account #2
-  wallet_private_key: 5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+  # Wallet mode only: anvil account #2 is 5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+  wallet_private_key:
   wallet_allowed_chain_ids: [31337]
