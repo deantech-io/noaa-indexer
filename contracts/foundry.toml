@@ -1,0 +1,9 @@
+[profile.default]
+src = "src"
+script = "script"
+out = "out"
+solc_version = "0.8.28"
+fs_permissions = [{ access = "write", path = "/shared" }]
+
+[lint]
+lint_on_build = false
