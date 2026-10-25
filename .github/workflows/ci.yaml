@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Check go.mod
+        run: go mod tidy -diff
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.3.1
+          args: --build-tags integration
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: noaa
+          POSTGRES_PASSWORD: noaa
+          POSTGRES_DB: noaa_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U noaa"
+          --health-interval 2s
+          --health-retries 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      - name: Run unit tests
+        run: go test -race ./...
+
+      - name: Run integration tests
+        env:
+          TEST_DB_URL: postgres://noaa:noaa@localhost:5432/noaa_test?sslmode=disable
+        run: go test -race -tags integration -p 1 ./tests/integration/
