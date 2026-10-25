@@ -38,6 +38,7 @@ const (
 )
 
 type Checkpoint struct {
+	BlockID     int64  `db:"block_id"`
 	BlockNumber uint64 `db:"block_number"`
 	BlockHash   Hash   `db:"block_hash"`
 }

@@ -1,6 +1,9 @@
 package pg
 
 import (
+	"database/sql"
+	"errors"
+
 	sq "github.com/Masterminds/squirrel"
 	"github.com/rarimo/noaa-indexer/internal/data"
 	"gitlab.com/distributed_lab/kit/pgdb"
@@ -49,13 +52,19 @@ func (q SubmissionsQ) SelectByStatus(statuses ...data.SubmissionStatus) ([]data.
 	return result, err
 }
 
-func (q SubmissionsQ) Update(id int64, status data.SubmissionStatus, txHash *data.Hash, errMsg string) error {
+// Update reports false if the submission is no longer in one of the from statuses.
+func (q SubmissionsQ) Update(id int64, to data.SubmissionStatus, txHash *data.Hash, errMsg string, from ...data.SubmissionStatus) (bool, error) {
 	upd := sq.Update(submissionTable).
-		Set("status", status).
+		Set("status", to).
 		Set("error", errMsg).
-		Where(sq.Eq{"finalizer_submission_id": id})
+		Where(sq.Eq{"finalizer_submission_id": id, "status": from}).
+		Suffix("RETURNING finalizer_submission_id")
 	if txHash != nil {
 		upd = upd.Set("tx_hash", *txHash)
 	}
-	return q.db.Exec(upd)
+	err := q.db.Get(&id, upd)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }

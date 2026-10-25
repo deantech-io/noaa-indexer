@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/rarimo/noaa-indexer/internal/data"
+	"github.com/rarimo/noaa-indexer/internal/data/pg"
 	"github.com/rarimo/noaa-indexer/internal/service/indexer"
 	"gitlab.com/distributed_lab/logan/v3/errors"
 )
@@ -189,5 +190,43 @@ func assertState(t *testing.T, s data.RecoveryState, status data.Status, key int
 	t.Helper()
 	if s.Status != status || !s.NewIdentityKey.Equal(data.NewNumeric(big.NewInt(key))) {
 		t.Errorf("state of %s = %s/%v, want %s/%d", s.PassportHash.Hex(), s.Status, s.NewIdentityKey.Int, status, key)
+	}
+}
+
+func TestCheckpointCompareAndSet(t *testing.T) {
+	e := setup(t, 60, 600)
+	cfg := e.config(nil, nil)
+	contractID := e.contractID(cfg)
+	contracts, blocks := pg.NewContractQ(cfg.DB()), pg.NewBlockQ(cfg.DB(), anvilChainID)
+
+	b1, err := blocks.Ensure(1, data.Hash(common.Hash{1}), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := blocks.Ensure(2, data.Hash(common.Hash{2}), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		prev  *int64
+		block int64
+		want  bool
+	}{
+		{nil, b1, true},
+		{nil, b2, false},
+		{&b2, b2, false},
+		{&b1, b2, true},
+	} {
+		moved, err := contracts.SetCheckpoint(contractID, c.prev, c.block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if moved != c.want {
+			t.Errorf("SetCheckpoint(prev %v, %d) = %t, want %t", c.prev, c.block, moved, c.want)
+		}
+	}
+	if got := e.checkpoint(cfg); got != 2 {
+		t.Errorf("checkpoint = %d, want 2", got)
 	}
 }

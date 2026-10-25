@@ -17,6 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/rarimo/noaa-indexer/internal/config"
 	"github.com/rarimo/noaa-indexer/internal/data"
+	"github.com/rarimo/noaa-indexer/internal/data/pg"
 	"github.com/rarimo/noaa-indexer/internal/service/finalizer"
 	"github.com/rarimo/noaa-indexer/internal/service/indexer"
 )
@@ -210,4 +211,39 @@ func (e *env) startMockRelayer() string {
 		return err == nil
 	})
 	return fmt.Sprintf("http://%s/integrations/registration-relayer/v1/register", addr)
+}
+
+func TestSubmissionConditionalUpdate(t *testing.T) {
+	e := setup(t, recoveryDelay, 600)
+	cfg := e.config(nil, nil)
+	e.readyAndIndexed(cfg, map[common.Hash]int64{passport(1): 11})
+
+	subs := pg.NewSubmissionsQ(cfg.DB(), e.contractID(cfg))
+	id, err := subs.Claim(e.events(cfg)[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txHash := data.Hash(common.Hash{1})
+	for _, c := range []struct {
+		to   data.SubmissionStatus
+		from []data.SubmissionStatus
+		want bool
+	}{
+		{data.SubmissionConfirmed, []data.SubmissionStatus{data.SubmissionSubmitted}, false},
+		{data.SubmissionUnknown, []data.SubmissionStatus{data.SubmissionSubmitting}, true},
+		{data.SubmissionUnknown, []data.SubmissionStatus{data.SubmissionSubmitting}, false},
+		{data.SubmissionSubmitted, []data.SubmissionStatus{data.SubmissionSubmitting, data.SubmissionUnknown}, true},
+	} {
+		ok, err := subs.Update(id, c.to, &txHash, "", c.from...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok != c.want {
+			t.Errorf("Update(%s from %v) = %t, want %t", c.to, c.from, ok, c.want)
+		}
+	}
+	if got := e.submissions(cfg); len(got) != 1 || got[0].Status != data.SubmissionSubmitted {
+		t.Errorf("submissions = %+v, want a single submitted one", got)
+	}
 }

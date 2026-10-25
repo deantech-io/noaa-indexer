@@ -144,7 +144,7 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 	}
 
 	to := r.last.Number.Uint64()
-	if err = ix.save(events, r.last); err != nil {
+	if err = ix.save(cp, events, r.last); err != nil {
 		return false, errors.Wrap(err, "failed to save range", logan.F{"from": from, "to": to})
 	}
 
@@ -209,7 +209,7 @@ func (ix *Indexer) read(ctx context.Context, ec *ethclient.Client, from uint64) 
 }
 
 // save stores events, updates state and moves the checkpoint in one transaction.
-func (ix *Indexer) save(events []data.RecoveryEvent, last *types.Header) error {
+func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *types.Header) error {
 	contracts := pg.NewContractQ(ix.db)
 	blocks := pg.NewBlockQ(ix.db, ix.chainID)
 	eventsQ := pg.NewEventsQ(ix.db, ix.chainID, ix.contractID)
@@ -246,7 +246,18 @@ func (ix *Indexer) save(events []data.RecoveryEvent, last *types.Header) error {
 		if err != nil {
 			return errors.Wrap(err, "failed to save checkpoint block")
 		}
-		return contracts.SetCheckpoint(ix.contractID, blockID)
+		var prev *int64
+		if cp != nil {
+			prev = &cp.BlockID
+		}
+		moved, err := contracts.SetCheckpoint(ix.contractID, prev, blockID)
+		if err != nil {
+			return errors.Wrap(err, "failed to set checkpoint")
+		}
+		if !moved {
+			return errors.New("checkpoint was moved concurrently")
+		}
+		return nil
 	})
 }
 

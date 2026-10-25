@@ -186,14 +186,20 @@ func (f *Finalizer) finalize(ctx context.Context, s data.RecoveryState, now time
 	hash, err := f.submitter.submit(ctx, calldata)
 	switch {
 	case err == nil:
+		txHash := data.Hash(hash)
+		if err = f.update(id, data.SubmissionSubmitted, &txHash, "", data.SubmissionSubmitting, data.SubmissionUnknown); err != nil {
+			return errors.Wrap(err, "failed to save submitted", logan.F{"tx_hash": hash.Hex()})
+		}
 		log.WithField("tx_hash", hash.Hex()).Info("finalization submitted")
 		metrics.Submissions.WithLabelValues(string(data.SubmissionSubmitted)).Inc()
-		txHash := data.Hash(hash)
-		return f.submissions.Update(id, data.SubmissionSubmitted, &txHash, "")
+		return nil
 	case errors.Cause(err) == errRejected:
+		if uerr := f.update(id, data.SubmissionRejected, nil, err.Error(), data.SubmissionSubmitting, data.SubmissionUnknown); uerr != nil {
+			return uerr
+		}
 		log.WithError(err).Warn("finalization rejected")
 		metrics.Submissions.WithLabelValues(string(data.SubmissionRejected)).Inc()
-		return f.submissions.Update(id, data.SubmissionRejected, nil, err.Error())
+		return nil
 	default:
 		f.markUnknown(id, s.PassportHash, err)
 		return nil
@@ -252,11 +258,11 @@ func (f *Finalizer) track(ctx context.Context) error {
 				if receipt.Status != types.ReceiptStatusSuccessful {
 					status = data.SubmissionFailed
 				}
-				log.WithField("tx_hash", s.TxHash.Hex()).Infof("finalization %s", status)
-				metrics.Submissions.WithLabelValues(string(status)).Inc()
-				if err = f.submissions.Update(s.ID, status, nil, s.Error); err != nil {
+				if err = f.update(s.ID, status, nil, s.Error, s.Status); err != nil {
 					return err
 				}
+				log.WithField("tx_hash", s.TxHash.Hex()).Infof("finalization %s", status)
+				metrics.Submissions.WithLabelValues(string(status)).Inc()
 				continue
 			case errors.Cause(err) != ethereum.NotFound:
 				return errors.Wrap(err, "failed to get receipt", logan.F{"tx_hash": s.TxHash.Hex()})
@@ -269,19 +275,19 @@ func (f *Finalizer) track(ctx context.Context) error {
 			return err
 		}
 		if !pending {
-			log.Info("request resolved, closing submission")
-			if err = f.submissions.Update(s.ID, data.SubmissionResolved, nil, s.Error); err != nil {
+			if err = f.update(s.ID, data.SubmissionResolved, nil, s.Error, s.Status); err != nil {
 				return err
 			}
+			log.Info("request resolved, submission closed")
 			continue
 		}
 
 		// Covers unknown outcomes and dropped transactions.
 		if f.cfg.UnknownRetryAfter > 0 && time.Since(s.UpdatedAt) > f.cfg.UnknownRetryAfter {
-			log.Warn("submission expired, allowing a new attempt")
-			if err = f.submissions.Update(s.ID, data.SubmissionExpired, nil, s.Error); err != nil {
+			if err = f.update(s.ID, data.SubmissionExpired, nil, s.Error, s.Status); err != nil {
 				return err
 			}
+			log.Warn("submission expired, allowing a new attempt")
 			continue
 		}
 		if s.Status == data.SubmissionUnknown {
@@ -314,7 +320,19 @@ func (f *Finalizer) markUnknown(id int64, passportHash data.Hash, cause error) {
 	log.WithError(cause).Error("finalization outcome unknown, request blocked until resolved")
 	metrics.Submissions.WithLabelValues(string(data.SubmissionUnknown)).Inc()
 
-	if err := f.submissions.Update(id, data.SubmissionUnknown, nil, cause.Error()); err != nil {
+	if err := f.update(id, data.SubmissionUnknown, nil, cause.Error(), data.SubmissionSubmitting); err != nil {
 		log.WithError(err).Error("failed to mark submission unknown")
 	}
+}
+
+func (f *Finalizer) update(id int64, to data.SubmissionStatus, txHash *data.Hash, errMsg string, from ...data.SubmissionStatus) error {
+	fields := logan.F{"submission_id": id, "status": to}
+	ok, err := f.submissions.Update(id, to, txHash, errMsg, from...)
+	if err != nil {
+		return errors.Wrap(err, "failed to update submission", fields)
+	}
+	if !ok {
+		return errors.From(errors.New("submission changed concurrently"), fields)
+	}
+	return nil
 }
