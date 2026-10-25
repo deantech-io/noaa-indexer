@@ -126,7 +126,7 @@ func TestFinalizerUnknownOutcomeIsNotRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })}
+	srv := &http.Server{Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
@@ -257,7 +257,7 @@ func TestFinalizerRetries(t *testing.T) {
 	e := setup(t, recoveryDelay, 600)
 
 	const reason = "execution reverted: not ready"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = fmt.Fprintf(w, `{"errors":[{"title":%q}]}`, reason)
 	}))
@@ -272,7 +272,6 @@ func TestFinalizerRetries(t *testing.T) {
 		"max_attempts":       3,
 	})
 	e.readyAndIndexed(cfg, map[common.Hash]int64{passport(1): 11})
-	exhausted := counterValue(t, metrics.ExhaustedRequests)
 
 	stop := runInBackground(finalizer.New(cfg).Run)
 	defer func() { _ = stop() }()
@@ -296,7 +295,7 @@ func TestFinalizerRetries(t *testing.T) {
 			t.Errorf("gap before attempt %d = %s, want at least %s", i+2, gap, want)
 		}
 	}
-	if got := counterValue(t, metrics.ExhaustedRequests) - exhausted; got != 1 {
+	if got := gaugeValue(t, metrics.ExhaustedRequests); got != 1 {
 		t.Errorf("exhausted requests = %v, want 1", got)
 	}
 }
@@ -376,11 +375,11 @@ func mustPanic(t *testing.T, want string, f func()) {
 	f()
 }
 
-func counterValue(t *testing.T, c prometheus.Counter) float64 {
+func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
 	t.Helper()
 	var m dto.Metric
-	if err := c.Write(&m); err != nil {
+	if err := g.Write(&m); err != nil {
 		t.Fatal(err)
 	}
-	return m.GetCounter().GetValue()
+	return m.GetGauge().GetValue()
 }

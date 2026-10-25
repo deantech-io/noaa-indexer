@@ -110,9 +110,15 @@ func (f *Finalizer) tick(ctx context.Context) error {
 		return errors.Wrap(err, "failed to track submissions")
 	}
 
+	exhausted, err := f.submissions.CountExhausted(f.cfg.MaxAttempts)
+	if err != nil {
+		return errors.Wrap(err, "failed to count exhausted requests")
+	}
+	metrics.ExhaustedRequests.Set(float64(exhausted))
+
 	// The contract compares readyAt with block.timestamp.
 	var head *types.Header
-	err := f.client.Do(ctx, func(ctx context.Context, ec *ethclient.Client) (err error) {
+	err = f.client.Do(ctx, func(ctx context.Context, ec *ethclient.Client) (err error) {
 		head, err = ec.HeaderByNumber(ctx, nil)
 		return err
 	})
@@ -254,7 +260,8 @@ func (f *Finalizer) track(ctx context.Context) error {
 				}
 				continue
 			case errors.Cause(err) != ethereum.NotFound:
-				return errors.Wrap(err, "failed to get receipt", logan.F{"tx_hash": s.TxHash.Hex()})
+				log.WithError(err).WithField("tx_hash", s.TxHash.Hex()).Error("failed to get receipt")
+				continue
 			}
 		}
 
@@ -322,7 +329,6 @@ func (f *Finalizer) checkExhausted(log *logan.Entry, requestID int64) error {
 	}
 	if len(attempts) >= f.cfg.MaxAttempts {
 		log.WithField("attempts", len(attempts)).Error("finalization attempts exhausted, request will not be retried")
-		metrics.ExhaustedRequests.Inc()
 	}
 	return nil
 }

@@ -66,6 +66,18 @@ func (q SubmissionsQ) SelectByStatus(statuses ...data.SubmissionStatus) ([]data.
 	return result, err
 }
 
+// CountExhausted returns the number of pending requests with maxAttempts closed attempts.
+func (q SubmissionsQ) CountExhausted(maxAttempts int) (int, error) {
+	var n int
+	err := q.db.Get(&n, sq.Select("COUNT(*)").From(stateTable+" st").
+		Where(sq.Eq{"st.contract_id": q.contractID, "st.is_active": true}).
+		Where(sq.NotEq{"st.new_identity_key": nil}).
+		Where(sq.Expr("(SELECT COUNT(*) FROM "+submissionTable+" s WHERE s.recovery_event_id = st.recovery_event_id"+
+			" AND s.is_active AND s.status IN (?, ?, ?)) >= ?",
+			data.SubmissionFailed, data.SubmissionRejected, data.SubmissionExpired, maxAttempts)))
+	return n, err
+}
+
 // SelectByRequest returns the attempts for the request, oldest first.
 func (q SubmissionsQ) SelectByRequest(requestID int64) ([]data.Submission, error) {
 	var result []data.Submission

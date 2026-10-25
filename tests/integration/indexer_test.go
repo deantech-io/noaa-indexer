@@ -47,7 +47,7 @@ func TestHeaderHashMatchesNode(t *testing.T) {
 
 func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 	e := setup(t, 60, 600)
-	p1, p2, p3, p4 := passport(1), passport(2), passport(3), passport(4)
+	p1, p2, p3, p4, p5 := passport(1), passport(2), passport(3), passport(4), passport(5)
 
 	e.request(p1, 11)
 	e.mine(5)
@@ -58,6 +58,12 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 	e.request(p3, 34) // contests
 	e.request(p4, 44)
 	e.send(e.contract.LockRecovery(e.auth, p4, nil))
+	e.request(p5, 55)
+	e.rpc("evm_increaseTime", 61)
+	e.send(e.contract.FinalizeRecovery(e.auth, p5))
+	// Lock and unlock while the cancel's time lock is active.
+	e.send(e.contract.LockRecovery(e.auth, p2, nil))
+	e.send(e.contract.UnlockRecovery(e.auth, p2, nil))
 	finalized := e.finalize()
 
 	// Small chunks force many eth_getLogs ranges.
@@ -69,16 +75,17 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 	}
 
 	// The lock also emits RecoveryCancelled for the dropped request.
-	if n := len(e.events(cfg)); n != 8 {
-		t.Fatalf("events = %d, want 8", n)
+	if n := len(e.events(cfg)); n != 12 {
+		t.Fatalf("events = %d, want 12", n)
 	}
-	for _, p := range []common.Hash{p1, p2, p3, p4} {
+	for _, p := range []common.Hash{p1, p2, p3, p4, p5} {
 		e.assertOnChain(cfg, p)
 	}
 	assertState(t, e.state(cfg, p1), 11, false, false)
 	assertState(t, e.state(cfg, p2), 0, true, false)
 	assertState(t, e.state(cfg, p3), 0, true, false)
 	assertState(t, e.state(cfg, p4), 0, false, true)
+	assertState(t, e.state(cfg, p5), 0, false, false)
 	if s := e.state(cfg, p1); s.DGCommit.Int64() != 1011 || s.OldIdentityKey.Int64() != 1 {
 		t.Errorf("state of p1 = %+v, want dg commit 1011, old identity key 1", s)
 	}
@@ -97,8 +104,8 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 		if e.checkpoint(cfg) <= checkpoint {
 			t.Fatal("checkpoint did not advance")
 		}
-		if n := len(e.events(cfg)); n != 9 {
-			t.Fatalf("events = %d, want 9", n)
+		if n := len(e.events(cfg)); n != 13 {
+			t.Fatalf("events = %d, want 13", n)
 		}
 		e.assertOnChain(cfg, p1)
 		assertState(t, e.state(cfg, p1), 0, true, false)
@@ -116,18 +123,18 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if n := len(e.events(cfg)); n != 9 {
-			t.Fatalf("events = %d, want 9", n)
+		if n := len(e.events(cfg)); n != 13 {
+			t.Fatalf("events = %d, want 13", n)
 		}
 		// Stored events must not be applied again.
-		for _, p := range []common.Hash{p1, p2, p3, p4} {
+		for _, p := range []common.Hash{p1, p2, p3, p4, p5} {
 			e.assertOnChain(cfg, p)
 		}
 	})
 
 	t.Run("rebuild from events", func(t *testing.T) {
 		before := map[common.Hash]data.RecoveryState{}
-		for _, p := range []common.Hash{p1, p2, p3, p4} {
+		for _, p := range []common.Hash{p1, p2, p3, p4, p5} {
 			before[p] = e.state(cfg, p)
 		}
 		if err := cfg.DB().ExecRaw("UPDATE recovery_state SET old_identity_key = NULL, new_identity_key = NULL, dg_commit = NULL, " +
@@ -160,7 +167,7 @@ func TestIndexerRequestContestedInSameBlock(t *testing.T) {
 	e.rpc("evm_setAutomine", false)
 	auth := *e.auth
 	auth.GasLimit = 500_000
-	var txs []*types.Transaction
+	txs := make([]*types.Transaction, 0, 2)
 	for _, key := range []int64{11, 12} {
 		tx, err := e.contract.RequestRecovery(&auth, [32]byte{}, big.NewInt(key), big.NewInt(key+1000), p, [32]byte{}, nil)
 		if err != nil {

@@ -121,8 +121,7 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 		return err
 	})
 	if err != nil {
-		// Providers reject ranges that are too wide or return too many logs.
-		if _, ok := err.(rpc.Error); ok {
+		if r.rejected || chain.IsTimeout(err) {
 			ix.chunk = max(1, ix.chunk/2)
 		}
 		return false, errors.Wrap(err, "failed to read range", logan.F{"from": from})
@@ -145,7 +144,7 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 	}
 
 	to := r.last.Number.Uint64()
-	unexpected, err := ix.save(cp, r.events, r.last)
+	stored, unexpected, err := ix.save(cp, r.events, r.last)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to save range", logan.F{"from": from, "to": to})
 	}
@@ -159,11 +158,11 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 		metrics.UnexpectedTransitions.WithLabelValues(string(e.Type)).Inc()
 	}
 
-	for _, e := range r.events {
+	for _, e := range stored {
 		metrics.Events.WithLabelValues(string(e.Type)).Inc()
 	}
 	report(head, to)
-	ix.log.WithFields(logan.F{"from": from, "to": to, "events": len(r.events)}).Debug("indexed range")
+	ix.log.WithFields(logan.F{"from": from, "to": to, "events": len(stored)}).Debug("indexed range")
 
 	return to == r.finalized, nil
 }
@@ -172,6 +171,7 @@ type chunk struct {
 	finalized   uint64
 	first, last *types.Header // nil if from is above the finalized block
 	events      []data.RecoveryEvent
+	rejected    bool // the node rejected eth_getLogs for the range
 }
 
 // read fetches one range from a single endpoint, so a lagging fallback cannot mix with another
@@ -198,6 +198,7 @@ func (ix *Indexer) read(ctx context.Context, ec *ethclient.Client, from uint64) 
 		Topics:    [][]common.Hash{ix.topics},
 	})
 	if err != nil {
+		_, r.rejected = err.(rpc.Error)
 		return r, err
 	}
 	if r.last, err = ec.HeaderByNumber(ctx, new(big.Int).SetUint64(to)); err != nil {
@@ -259,15 +260,13 @@ func readContract(ctx context.Context, caller *contracts.NoAARecoveryCaller, blo
 }
 
 // save stores events, updates state and moves the checkpoint in one transaction.
-// It returns the new events the contract should not have emitted in the stored state.
-func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *types.Header) ([]data.RecoveryEvent, error) {
+func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *types.Header) (stored, unexpected []data.RecoveryEvent, err error) {
 	contracts := pg.NewContractQ(ix.db)
 	blocks := pg.NewBlockQ(ix.db, ix.chainID)
 	eventsQ := pg.NewEventsQ(ix.db, ix.chainID, ix.contractID)
 	stateQ := pg.NewStateQ(ix.db, ix.contractID)
 
-	var unexpected []data.RecoveryEvent
-	err := ix.db.Transaction(func() error {
+	err = ix.db.Transaction(func() error {
 		if err := contracts.Lock(ix.chainID); err != nil {
 			return errors.Wrap(err, "failed to lock")
 		}
@@ -281,6 +280,7 @@ func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *
 			if !inserted {
 				continue
 			}
+			stored = append(stored, e)
 
 			state, err := stateQ.Get(e.PassportHash)
 			if err != nil {
@@ -314,7 +314,7 @@ func (ix *Indexer) save(cp *data.Checkpoint, events []data.RecoveryEvent, last *
 		}
 		return nil
 	})
-	return unexpected, err
+	return stored, unexpected, err
 }
 
 // head returns 0 on error: it only feeds the lag metric.

@@ -106,7 +106,7 @@ attempt is a `finalizer_submission` row for the request event. A unique index al
 blocking attempt per request, and a passport has at most one open (`submitting`, `submitted`,
 `unknown`) attempt. After a `failed`, `rejected` or `expired` attempt the request is retried with
 exponential backoff from `retry_base` to `retry_max`. After `max_attempts` it is logged at error
-level, counted in `noaa_finalizer_exhausted_requests_total` and no longer retried.
+level, counted in `noaa_finalizer_exhausted_requests` and no longer retried.
 
 | status    | meaning                                                   | blocks another attempt                                                               |
 | --------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -138,7 +138,7 @@ enums. Rows are never deleted; every table has `is_active`.
 `noaa_indexer_indexed_block`, `noaa_indexer_head_block`, `noaa_indexer_lag_blocks`,
 `noaa_indexer_events_total{type}`, `noaa_indexer_unexpected_transitions_total{type}`,
 `noaa_indexer_halted`, `noaa_finalizer_submissions_total{outcome}`,
-`noaa_finalizer_exhausted_requests_total`, `noaa_finalizer_unknown_submissions`.
+`noaa_finalizer_exhausted_requests`, `noaa_finalizer_unknown_submissions`.
 
 Hourly rates: `increase(noaa_indexer_events_total{type="requested"}[1h])`, same with
 `type="contested"`. Note that the counters also count events found during a backfill.
@@ -164,6 +164,9 @@ docker compose up --build
 
 The local recovery delay is 60 s and the lock duration 30 days. Mock passports start with the
 active identity `1`.
+
+Run one-off commands with `--no-deps`, otherwise compose deploys a new mock and rewrites the
+config: `docker compose run --rm --no-deps indexer rebuild`.
 
 ### Emitting test events
 
@@ -226,5 +229,5 @@ mode, state changed before submit, unknown outcome not retried, relayer rejectio
 and attempt cap, one open attempt per passport), config checks (chain ID mismatch, wallet mode on
 an unlisted chain) and RPC errors without endpoint URLs.
 
-Regenerating bindings: `go generate ./internal/contracts/` (provisional ABI) and
+Regenerating bindings: `go generate ./internal/contracts/` and
 `go generate ./tests/integration/mock/` (mock with bytecode, needs `forge`).

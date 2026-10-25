@@ -35,9 +35,9 @@ var (
 		Name: "noaa_finalizer_submissions_total",
 		Help: "Finalizer submission outcomes.",
 	}, []string{"outcome"})
-	ExhaustedRequests = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "noaa_finalizer_exhausted_requests_total",
-		Help: "Requests that reached max_attempts and are no longer retried.",
+	ExhaustedRequests = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "noaa_finalizer_exhausted_requests",
+		Help: "Pending requests that reached max_attempts and are no longer retried.",
 	})
 	UnknownSubmissions = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "noaa_finalizer_unknown_submissions",

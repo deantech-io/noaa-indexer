@@ -69,14 +69,20 @@ func (c *Client) call(ctx context.Context, i int, ec *ethclient.Client, f func(c
 
 	err := f(ctx, ec)
 	var netErr net.Error
+	isNetErr := errors.As(err, &netErr)
 	switch {
-	case !errors.As(err, &netErr):
-		return err
-	case netErr.Timeout():
-		return fmt.Errorf("rpc[%d]: request timed out", i)
-	default:
+	case errors.Is(err, context.DeadlineExceeded) || isNetErr && netErr.Timeout():
+		return fmt.Errorf("rpc[%d]: %w", i, errTimeout)
+	case isNetErr:
 		return fmt.Errorf("rpc[%d]: request failed", i)
 	}
+	return err
+}
+
+var errTimeout = errors.New("request timed out")
+
+func IsTimeout(err error) bool {
+	return errors.Is(err, errTimeout)
 }
 
 func isFinal(err error) bool {
