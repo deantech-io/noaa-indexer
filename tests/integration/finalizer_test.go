@@ -14,16 +14,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deantech-io/noaa-indexer/internal/config"
+	"github.com/deantech-io/noaa-indexer/internal/data"
+	"github.com/deantech-io/noaa-indexer/internal/data/pg"
+	"github.com/deantech-io/noaa-indexer/internal/metrics"
+	"github.com/deantech-io/noaa-indexer/internal/service/finalizer"
+	"github.com/deantech-io/noaa-indexer/internal/service/indexer"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/rarimo/noaa-indexer/internal/config"
-	"github.com/rarimo/noaa-indexer/internal/data"
-	"github.com/rarimo/noaa-indexer/internal/data/pg"
-	"github.com/rarimo/noaa-indexer/internal/metrics"
-	"github.com/rarimo/noaa-indexer/internal/service/finalizer"
-	"github.com/rarimo/noaa-indexer/internal/service/indexer"
 )
 
 const recoveryDelay = 100

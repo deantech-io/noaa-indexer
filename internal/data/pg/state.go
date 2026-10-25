@@ -6,7 +6,7 @@ import (
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
-	"github.com/rarimo/noaa-indexer/internal/data"
+	"github.com/deantech-io/noaa-indexer/internal/data"
 	"gitlab.com/distributed_lab/kit/pgdb"
 )
 

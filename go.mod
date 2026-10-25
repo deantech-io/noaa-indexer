@@ -1,4 +1,4 @@
-module github.com/rarimo/noaa-indexer
+module github.com/deantech-io/noaa-indexer
 
 go 1.24.0
 

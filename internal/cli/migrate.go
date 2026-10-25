@@ -1,8 +1,8 @@
 package cli
 
 import (
-	"github.com/rarimo/noaa-indexer/internal/assets"
-	"github.com/rarimo/noaa-indexer/internal/config"
+	"github.com/deantech-io/noaa-indexer/internal/assets"
+	"github.com/deantech-io/noaa-indexer/internal/config"
 	migrate "github.com/rubenv/sql-migrate"
 	"gitlab.com/distributed_lab/logan/v3/errors"
 )

@@ -1,14 +1,14 @@
 FROM golang:1.24.6-alpine AS buildbase
 
 RUN apk add git build-base ca-certificates
-WORKDIR /go/src/github.com/rarimo/noaa-indexer
+WORKDIR /go/src/github.com/deantech-io/noaa-indexer
 COPY . .
 
-RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/noaa-indexer /go/src/github.com/rarimo/noaa-indexer
+RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/noaa-indexer /go/src/github.com/deantech-io/noaa-indexer
 
 # Local development only (see compose.yaml).
 FROM buildbase AS mockrelayer-build
-RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/mockrelayer /go/src/github.com/rarimo/noaa-indexer/devtools/mockrelayer
+RUN CGO_ENABLED=1 GO111MODULE=on GOOS=linux go build -o /usr/local/bin/mockrelayer /go/src/github.com/deantech-io/noaa-indexer/devtools/mockrelayer
 
 FROM scratch AS mockrelayer
 COPY --from=alpine:3.9 /bin/sh /bin/sh

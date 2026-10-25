@@ -4,10 +4,10 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/deantech-io/noaa-indexer/internal/contracts"
+	"github.com/deantech-io/noaa-indexer/internal/data"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/rarimo/noaa-indexer/internal/contracts"
-	"github.com/rarimo/noaa-indexer/internal/data"
 )
 
 func TestDecode(t *testing.T) {

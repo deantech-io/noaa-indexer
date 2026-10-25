@@ -19,16 +19,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deantech-io/noaa-indexer/internal/cli"
+	"github.com/deantech-io/noaa-indexer/internal/config"
+	"github.com/deantech-io/noaa-indexer/internal/data"
+	"github.com/deantech-io/noaa-indexer/internal/data/pg"
+	"github.com/deantech-io/noaa-indexer/tests/integration/mock"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/rarimo/noaa-indexer/internal/cli"
-	"github.com/rarimo/noaa-indexer/internal/config"
-	"github.com/rarimo/noaa-indexer/internal/data"
-	"github.com/rarimo/noaa-indexer/internal/data/pg"
-	"github.com/rarimo/noaa-indexer/tests/integration/mock"
 	"gitlab.com/distributed_lab/kit/kv"
 )
 

@@ -1,10 +1,10 @@
 package recovery
 
 import (
+	"github.com/deantech-io/noaa-indexer/internal/contracts"
+	"github.com/deantech-io/noaa-indexer/internal/data"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/rarimo/noaa-indexer/internal/contracts"
-	"github.com/rarimo/noaa-indexer/internal/data"
 	"gitlab.com/distributed_lab/logan/v3"
 	"gitlab.com/distributed_lab/logan/v3/errors"
 )

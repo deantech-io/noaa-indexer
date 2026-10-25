@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/rarimo/noaa-indexer/internal/cli"
+	"github.com/deantech-io/noaa-indexer/internal/cli"
 )
 
 func main() {

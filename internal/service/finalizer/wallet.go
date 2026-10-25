@@ -5,12 +5,12 @@ import (
 	"crypto/ecdsa"
 	"math/big"
 
+	"github.com/deantech-io/noaa-indexer/internal/chain"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/rarimo/noaa-indexer/internal/chain"
 	"gitlab.com/distributed_lab/logan/v3/errors"
 )
 

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deantech-io/noaa-indexer/internal/data"
+	"github.com/deantech-io/noaa-indexer/internal/data/pg"
+	"github.com/deantech-io/noaa-indexer/internal/service/indexer"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/rarimo/noaa-indexer/internal/data"
-	"github.com/rarimo/noaa-indexer/internal/data/pg"
-	"github.com/rarimo/noaa-indexer/internal/service/indexer"
 	"gitlab.com/distributed_lab/logan/v3/errors"
 )
 

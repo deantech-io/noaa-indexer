@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/deantech-io/noaa-indexer/internal/chain"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/rarimo/noaa-indexer/internal/chain"
 	"gitlab.com/distributed_lab/figure/v3"
 	"gitlab.com/distributed_lab/kit/kv"
 	"gitlab.com/distributed_lab/logan/v3"

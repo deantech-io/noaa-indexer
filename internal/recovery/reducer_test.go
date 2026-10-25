@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rarimo/noaa-indexer/internal/data"
+	"github.com/deantech-io/noaa-indexer/internal/data"
 )
 
 func requested(key int64, readyAt uint64) data.RecoveryEvent {

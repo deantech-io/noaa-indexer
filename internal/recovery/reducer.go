@@ -1,7 +1,7 @@
 package recovery
 
 import (
-	"github.com/rarimo/noaa-indexer/internal/data"
+	"github.com/deantech-io/noaa-indexer/internal/data"
 )
 
 // Expected reports whether the contract allows e in state s.

@@ -5,8 +5,8 @@ import (
 	"errors"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/deantech-io/noaa-indexer/internal/data"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/rarimo/noaa-indexer/internal/data"
 	"gitlab.com/distributed_lab/kit/pgdb"
 )
 

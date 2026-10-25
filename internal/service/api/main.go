@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/deantech-io/noaa-indexer/internal/config"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rarimo/noaa-indexer/internal/config"
 )
 
 func Run(ctx context.Context, cfg config.Config, healthy func() bool) {
