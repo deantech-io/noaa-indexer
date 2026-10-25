@@ -1,6 +1,6 @@
 # noaa-indexer
 
-Indexer and finalizer for the `NoAARecovery` contract on Gnosis (chain 100) / Chiado (10200).
+Indexer and finalizer for the `NoAARecovery` contract.
 
 - **indexer** reads contract events up to the `finalized` block, stores them in `recovery_event`
   and keeps `recovery_state` (one row per passport hash) in sync.
@@ -39,7 +39,7 @@ listener:
   addr: :8000            # /health and /metrics
 
 network:
-  chain_id: 100          # must match the RPC, checked at start
+  chain_id: 1            # must match the RPC, checked at start
   rpc:                   # primary first, then fallbacks
     - https://...
     - https://...
