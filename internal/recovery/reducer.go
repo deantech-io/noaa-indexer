@@ -6,51 +6,39 @@ import (
 
 // Expected reports whether the contract allows e in state s.
 func Expected(s data.RecoveryState, e data.RecoveryEvent) bool {
-	locked, pending := s.Status == data.StatusLocked, !s.NewIdentityKey.IsZero()
+	pending := !s.NewIdentityKey.IsZero()
 
 	switch e.Type {
 	case data.EventRequested:
-		return !locked && !pending
-	case data.EventContested, data.EventFinalized:
-		return !locked && pending
+		return !s.IsRecoveryLocked && !pending && (s.LockedUntil == nil || !s.LockedUntil.After(e.MinedAt))
+	case data.EventContested:
+		return !s.IsRecoveryLocked && pending
 	case data.EventCancelled:
 		return pending
+	case data.EventFinalized:
+		return pending && s.ReadyAt != nil && !s.ReadyAt.After(e.MinedAt)
 	case data.EventLocked:
-		return !locked
+		return !s.IsRecoveryLocked
 	case data.EventUnlocked:
-		return locked
+		return s.IsRecoveryLocked
 	}
 	return false
 }
 
 // Apply returns the state after e. Events must be applied in chain order.
-//
-// TODO(real ABI): PROVISIONAL - a lock keeps the pending request and blocks its finalization.
 func Apply(s data.RecoveryState, e data.RecoveryEvent) data.RecoveryState {
-	locked := s.Status == data.StatusLocked
-
 	switch e.Type {
 	case data.EventRequested:
-		s.NewIdentityKey, s.ReadyAt, s.LockedUntil = e.NewIdentityKey, e.ReadyAt, nil
-	case data.EventCancelled, data.EventFinalized:
-		s.NewIdentityKey, s.ReadyAt = data.Numeric{}, nil
-	case data.EventContested:
-		s.NewIdentityKey, s.ReadyAt, s.LockedUntil = data.Numeric{}, nil, e.LockedUntil
+		s.OldIdentityKey, s.NewIdentityKey, s.DGCommit, s.ReadyAt = e.OldIdentityKey, e.NewIdentityKey, e.DGCommit, e.ReadyAt
+	case data.EventContested, data.EventCancelled:
+		s.OldIdentityKey, s.NewIdentityKey, s.DGCommit, s.ReadyAt = data.Numeric{}, data.Numeric{}, data.Numeric{}, nil
+		s.LockedUntil = e.LockedUntil
+	case data.EventFinalized:
+		s.OldIdentityKey, s.NewIdentityKey, s.DGCommit, s.ReadyAt = data.Numeric{}, data.Numeric{}, data.Numeric{}, nil
 	case data.EventLocked:
-		locked = true
+		s.IsRecoveryLocked = true
 	case data.EventUnlocked:
-		locked = false
-	}
-
-	switch {
-	case locked:
-		s.Status = data.StatusLocked
-	case !s.NewIdentityKey.IsZero():
-		s.Status = data.StatusPending
-	case s.LockedUntil != nil:
-		s.Status = data.StatusContested
-	default:
-		s.Status = data.StatusActive
+		s.IsRecoveryLocked = false
 	}
 
 	s.PassportHash = e.PassportHash

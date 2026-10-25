@@ -162,6 +162,39 @@ func (e *env) send(tx *types.Transaction, err error) {
 	e.wait(tx)
 }
 
+// request sends requestRecovery with dgCommit = key + 1000.
+func (e *env) request(p common.Hash, key int64) {
+	e.t.Helper()
+	e.send(e.contract.RequestRecovery(e.auth, [32]byte{}, big.NewInt(key), big.NewInt(key+1000), p, [32]byte{}, nil))
+}
+
+// assertOnChain checks that the indexed state of p mirrors the contract storage.
+func (e *env) assertOnChain(cfg config.Config, p common.Hash) {
+	e.t.Helper()
+	opts := &bind.CallOpts{}
+	request, err := e.contract.GetRecoveryRequest(opts, p)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	lockedUntil, err := e.contract.LockedUntil(opts, p)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	locked, err := e.contract.IsRecoveryLocked(opts, p)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+
+	s := e.state(cfg, p)
+	if !s.OldIdentityKey.Equal(data.NumericFromBytes(request.OldIdentityKey)) ||
+		!s.NewIdentityKey.Equal(data.NumericFromBytes(request.NewIdentityKey)) ||
+		!s.DGCommit.Equal(data.NewNumeric(request.DgCommit)) ||
+		!sameTime(s.ReadyAt, data.Time(request.ReadyAt)) || !sameTime(s.LockedUntil, data.Time(lockedUntil)) ||
+		s.IsRecoveryLocked != locked {
+		e.t.Errorf("state of %s = %+v, on chain %+v, locked until %d, locked %t", p.Hex(), s, request, lockedUntil, locked)
+	}
+}
+
 func (e *env) rpc(method string, args ...interface{}) {
 	e.t.Helper()
 	if err := e.ec.Client().Call(nil, method, args...); err != nil {

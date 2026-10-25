@@ -12,8 +12,8 @@ import (
 
 const stateTable = "recovery_state"
 
-var stateColumns = []string{"recovery_state_id", "recovery_event_id", "passport_hash", "status",
-	"new_identity_key", "ready_at", "locked_until"}
+var stateColumns = []string{"recovery_state_id", "recovery_event_id", "passport_hash", "old_identity_key",
+	"new_identity_key", "dg_commit", "ready_at", "locked_until", "is_recovery_locked"}
 
 type StateQ struct {
 	db         *pgdb.DB
@@ -34,10 +34,10 @@ func (q StateQ) Get(passportHash data.Hash) (*data.RecoveryState, error) {
 	return &result, err
 }
 
+// SelectReady returns pending requests with ready_at at or before now.
 func (q StateQ) SelectReady(now time.Time) ([]data.RecoveryState, error) {
 	var result []data.RecoveryState
 	err := q.db.Select(&result, q.selector().
-		Where(sq.Eq{"status": data.StatusPending}).
 		Where(sq.LtOrEq{"ready_at": now.UTC()}).
 		OrderBy("ready_at"))
 	return result, err
@@ -47,16 +47,20 @@ func (q StateQ) SelectReady(now time.Time) ([]data.RecoveryState, error) {
 func (q StateQ) Save(s data.RecoveryState) error {
 	if s.ID == 0 {
 		return q.db.Exec(sq.Insert(stateTable).
-			Columns("contract_id", "recovery_event_id", "passport_hash", "status", "new_identity_key", "ready_at", "locked_until").
-			Values(q.contractID, s.RecoveryEventID, s.PassportHash, s.Status, s.NewIdentityKey, s.ReadyAt, s.LockedUntil))
+			Columns("contract_id", "recovery_event_id", "passport_hash", "old_identity_key", "new_identity_key",
+				"dg_commit", "ready_at", "locked_until", "is_recovery_locked").
+			Values(q.contractID, s.RecoveryEventID, s.PassportHash, s.OldIdentityKey, s.NewIdentityKey,
+				s.DGCommit, s.ReadyAt, s.LockedUntil, s.IsRecoveryLocked))
 	}
 
 	return q.db.Exec(sq.Update(stateTable).
 		Set("recovery_event_id", s.RecoveryEventID).
-		Set("status", s.Status).
+		Set("old_identity_key", s.OldIdentityKey).
 		Set("new_identity_key", s.NewIdentityKey).
+		Set("dg_commit", s.DGCommit).
 		Set("ready_at", s.ReadyAt).
 		Set("locked_until", s.LockedUntil).
+		Set("is_recovery_locked", s.IsRecoveryLocked).
 		Where(sq.Eq{"recovery_state_id": s.ID}))
 }
 

@@ -21,9 +21,8 @@ contract Deploy {
         uint256 startBlock = block.number;
 
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
-        MockNoAARecovery c = new MockNoAARecovery(
-            uint64(vm.envUint("RECOVERY_DELAY")), uint64(vm.envUint("CONTEST_LOCK"))
-        );
+        MockNoAARecovery c =
+            new MockNoAARecovery(uint64(vm.envUint("RECOVERY_DELAY")), uint64(vm.envUint("LOCK_DURATION")));
         vm.stopBroadcast();
 
         vm.writeFile(

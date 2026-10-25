@@ -45,6 +45,11 @@ func NewNumeric(i *big.Int) Numeric {
 	return Numeric{Int: i}
 }
 
+// NumericFromBytes reads a bytes32 value as an unsigned big-endian integer.
+func NumericFromBytes(b [32]byte) Numeric {
+	return Numeric{Int: new(big.Int).SetBytes(b[:])}
+}
+
 func (n Numeric) Value() (driver.Value, error) {
 	if n.Int == nil {
 		return nil, nil

@@ -4,7 +4,6 @@ package integration
 
 import (
 	"fmt"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +31,7 @@ const recoveryDelay = 100
 func (e *env) readyAndIndexed(cfg config.Config, keys map[common.Hash]int64) {
 	e.t.Helper()
 	for p, k := range keys {
-		e.send(e.contract.RequestRecovery(e.auth, p, big.NewInt(k)))
+		e.request(p, k)
 	}
 	e.rpc("evm_increaseTime", recoveryDelay+1)
 	finalized := e.finalize()
@@ -46,11 +45,11 @@ func (e *env) readyAndIndexed(cfg config.Config, keys map[common.Hash]int64) {
 
 func (e *env) identityKey(p common.Hash) int64 {
 	e.t.Helper()
-	k, err := e.contract.IdentityKey(&bind.CallOpts{}, p)
+	k, err := e.contract.ActiveIdentity(&bind.CallOpts{}, p)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return k.Int64()
+	return data.NumericFromBytes(k).Int64()
 }
 
 func submissionsFor(subs []data.Submission, p common.Hash) []data.Submission {
@@ -70,9 +69,9 @@ func TestFinalizerWallet(t *testing.T) {
 	e.readyAndIndexed(cfg, map[common.Hash]int64{ready: 11, cancelled: 22})
 
 	// Cancelled on chain, still pending in the indexed state.
-	e.send(e.contract.CancelRecovery(e.auth, cancelled))
-	if s := e.state(cfg, cancelled); s.Status != data.StatusPending {
-		t.Fatalf("precondition: indexed status = %s, want pending", s.Status)
+	e.send(e.contract.CancelRecovery(e.auth, cancelled, nil))
+	if s := e.state(cfg, cancelled); s.NewIdentityKey.IsZero() {
+		t.Fatal("precondition: indexed request is not pending")
 	}
 
 	stop := runInBackground(finalizer.New(cfg).Run)
@@ -307,9 +306,10 @@ func TestOneOpenSubmissionPerPassport(t *testing.T) {
 	cfg := e.config(nil, nil)
 	p := passport(1)
 
-	e.send(e.contract.RequestRecovery(e.auth, p, big.NewInt(11)))
-	e.send(e.contract.CancelRecovery(e.auth, p))
-	e.send(e.contract.RequestRecovery(e.auth, p, big.NewInt(12)))
+	e.request(p, 11)
+	e.send(e.contract.CancelRecovery(e.auth, p, nil))
+	e.rpc("evm_increaseTime", 601) // past the lock set by the cancel
+	e.request(p, 12)
 	e.readyAndIndexed(cfg, nil)
 
 	var requests []int64

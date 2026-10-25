@@ -8,45 +8,56 @@
         "internalType": "uint64"
       },
       {
-        "name": "contestLock_",
+        "name": "lockDuration_",
         "type": "uint64",
         "internalType": "uint64"
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "activeIdentity",
+    "inputs": [
+      {
+        "name": "passportHash_",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
     "name": "cancelRecovery",
     "inputs": [
       {
-        "name": "passportHash",
+        "name": "passportHash_",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "contestLock",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
     "name": "finalizeRecovery",
     "inputs": [
       {
-        "name": "passportHash",
+        "name": "passportHash_",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -56,10 +67,10 @@
   },
   {
     "type": "function",
-    "name": "identityKey",
+    "name": "getRecoveryRequest",
     "inputs": [
       {
-        "name": "",
+        "name": "passportHash_",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -67,28 +78,37 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "tuple",
+        "internalType": "struct INoAARecovery.RecoveryRequest",
+        "components": [
+          {
+            "name": "oldIdentityKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "newIdentityKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "dgCommit",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "readyAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "lockRecovery",
-    "inputs": [
-      {
-        "name": "passportHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "locked",
+    "name": "isRecoveryLocked",
     "inputs": [
       {
         "name": "",
@@ -104,6 +124,37 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lockDuration",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lockRecovery",
+    "inputs": [
+      {
+        "name": "passportHash_",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -142,14 +193,34 @@
     "name": "requestRecovery",
     "inputs": [
       {
-        "name": "passportHash",
+        "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
       },
       {
-        "name": "newIdentityKey",
+        "name": "identityKey_",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "dgCommit_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "passportHash_",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -157,36 +228,17 @@
   },
   {
     "type": "function",
-    "name": "requests",
-    "inputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "newIdentityKey",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "readyAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "unlockRecovery",
     "inputs": [
       {
-        "name": "passportHash",
+        "name": "passportHash_",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -199,7 +251,13 @@
       {
         "name": "passportHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "pendingIdentityKey",
+        "type": "bytes32",
+        "indexed": false,
         "internalType": "bytes32"
       }
     ],
@@ -212,14 +270,20 @@
       {
         "name": "passportHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
         "internalType": "bytes32"
       },
       {
-        "name": "lockedUntil",
-        "type": "uint64",
+        "name": "pendingIdentityKey",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "uint64"
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newIdentityKey",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -231,14 +295,20 @@
       {
         "name": "passportHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "oldIdentityKey",
+        "type": "bytes32",
+        "indexed": false,
         "internalType": "bytes32"
       },
       {
         "name": "newIdentityKey",
-        "type": "uint256",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -250,7 +320,7 @@
       {
         "name": "passportHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
         "internalType": "bytes32"
       }
     ],
@@ -263,20 +333,20 @@
       {
         "name": "passportHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
         "internalType": "bytes32"
       },
       {
         "name": "newIdentityKey",
-        "type": "uint256",
+        "type": "bytes32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       },
       {
         "name": "readyAt",
-        "type": "uint64",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint64"
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -288,7 +358,7 @@
       {
         "name": "passportHash",
         "type": "bytes32",
-        "indexed": true,
+        "indexed": false,
         "internalType": "bytes32"
       }
     ],

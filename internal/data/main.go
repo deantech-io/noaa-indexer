@@ -15,15 +15,6 @@ const (
 	EventUnlocked  EventType = "unlocked"
 )
 
-type Status string
-
-const (
-	StatusActive    Status = "active"
-	StatusPending   Status = "pending"
-	StatusContested Status = "contested"
-	StatusLocked    Status = "locked"
-)
-
 type SubmissionStatus string
 
 const (
@@ -53,19 +44,24 @@ type RecoveryEvent struct {
 	MinedAt        time.Time  `db:"mined_at"`
 	Type           EventType  `db:"event_type"`
 	PassportHash   Hash       `db:"passport_hash"`
+	OldIdentityKey Numeric    `db:"old_identity_key"`
 	NewIdentityKey Numeric    `db:"new_identity_key"`
+	DGCommit       Numeric    `db:"dg_commit"`
 	ReadyAt        *time.Time `db:"ready_at"`
 	LockedUntil    *time.Time `db:"locked_until"`
 }
 
+// RecoveryState mirrors the contract storage of a passport. A zero NewIdentityKey means no pending request.
 type RecoveryState struct {
-	ID              int64      `db:"recovery_state_id"`
-	RecoveryEventID int64      `db:"recovery_event_id"`
-	PassportHash    Hash       `db:"passport_hash"`
-	Status          Status     `db:"status"`
-	NewIdentityKey  Numeric    `db:"new_identity_key"`
-	ReadyAt         *time.Time `db:"ready_at"`
-	LockedUntil     *time.Time `db:"locked_until"`
+	ID               int64      `db:"recovery_state_id"`
+	RecoveryEventID  int64      `db:"recovery_event_id"`
+	PassportHash     Hash       `db:"passport_hash"`
+	OldIdentityKey   Numeric    `db:"old_identity_key"`
+	NewIdentityKey   Numeric    `db:"new_identity_key"`
+	DGCommit         Numeric    `db:"dg_commit"`
+	ReadyAt          *time.Time `db:"ready_at"`
+	LockedUntil      *time.Time `db:"locked_until"`
+	IsRecoveryLocked bool       `db:"is_recovery_locked"`
 }
 
 // Submission is a finalizer_submission row with the passport of its request event.

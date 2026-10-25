@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/rarimo/noaa-indexer/internal/chain"
 	"github.com/rarimo/noaa-indexer/internal/config"
+	"github.com/rarimo/noaa-indexer/internal/contracts"
 	"github.com/rarimo/noaa-indexer/internal/data"
 	"github.com/rarimo/noaa-indexer/internal/data/pg"
 	"github.com/rarimo/noaa-indexer/internal/metrics"
@@ -142,18 +144,8 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 		})
 	}
 
-	events := make([]data.RecoveryEvent, 0, len(r.logs))
-	for _, l := range r.logs {
-		e, err := recovery.Decode(l)
-		if err != nil {
-			return false, errors.Wrap(err, "failed to decode log", logan.F{"tx_hash": l.TxHash.Hex(), "log_index": l.Index})
-		}
-		e.MinedAt = r.minedAt[l.BlockHash]
-		events = append(events, e)
-	}
-
 	to := r.last.Number.Uint64()
-	unexpected, err := ix.save(cp, events, r.last)
+	unexpected, err := ix.save(cp, r.events, r.last)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to save range", logan.F{"from": from, "to": to})
 	}
@@ -167,11 +159,11 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 		metrics.UnexpectedTransitions.WithLabelValues(string(e.Type)).Inc()
 	}
 
-	for _, e := range events {
+	for _, e := range r.events {
 		metrics.Events.WithLabelValues(string(e.Type)).Inc()
 	}
 	report(head, to)
-	ix.log.WithFields(logan.F{"from": from, "to": to, "events": len(events)}).Debug("indexed range")
+	ix.log.WithFields(logan.F{"from": from, "to": to, "events": len(r.events)}).Debug("indexed range")
 
 	return to == r.finalized, nil
 }
@@ -179,8 +171,7 @@ func (ix *Indexer) step(ctx context.Context) (bool, error) {
 type chunk struct {
 	finalized   uint64
 	first, last *types.Header // nil if from is above the finalized block
-	logs        []types.Log
-	minedAt     map[common.Hash]time.Time
+	events      []data.RecoveryEvent
 }
 
 // read fetches one range from a single endpoint, so a lagging fallback cannot mix with another
@@ -200,7 +191,7 @@ func (ix *Indexer) read(ctx context.Context, ec *ethclient.Client, from uint64) 
 	if r.first, err = ec.HeaderByNumber(ctx, new(big.Int).SetUint64(from)); err != nil {
 		return r, err
 	}
-	r.logs, err = ec.FilterLogs(ctx, ethereum.FilterQuery{
+	logs, err := ec.FilterLogs(ctx, ethereum.FilterQuery{
 		FromBlock: new(big.Int).SetUint64(from),
 		ToBlock:   new(big.Int).SetUint64(to),
 		Addresses: []common.Address{ix.contract.Address},
@@ -213,18 +204,58 @@ func (ix *Indexer) read(ctx context.Context, ec *ethclient.Client, from uint64) 
 		return r, err
 	}
 
-	r.minedAt = make(map[common.Hash]time.Time)
-	for _, l := range r.logs {
-		if _, ok := r.minedAt[l.BlockHash]; ok {
-			continue
-		}
-		h, err := ec.HeaderByHash(ctx, l.BlockHash)
+	caller, err := contracts.NewNoAARecoveryCaller(ix.contract.Address, ec)
+	if err != nil {
+		return r, err
+	}
+	minedAt := make(map[common.Hash]time.Time)
+	r.events = make([]data.RecoveryEvent, 0, len(logs))
+	for _, l := range logs {
+		e, err := recovery.Decode(l)
 		if err != nil {
+			return r, errors.Wrap(err, "failed to decode log", logan.F{"tx_hash": l.TxHash.Hex(), "log_index": l.Index})
+		}
+
+		if _, ok := minedAt[l.BlockHash]; !ok {
+			h, err := ec.HeaderByHash(ctx, l.BlockHash)
+			if err != nil {
+				return r, err
+			}
+			minedAt[l.BlockHash] = time.Unix(int64(h.Time), 0).UTC()
+		}
+		e.MinedAt = minedAt[l.BlockHash]
+
+		if err = readContract(ctx, caller, l.BlockHash, &e); err != nil {
 			return r, err
 		}
-		r.minedAt[l.BlockHash] = time.Unix(int64(h.Time), 0).UTC()
+		r.events = append(r.events, e)
 	}
 	return r, nil
+}
+
+// readContract fills the values the event does not carry from the contract state at the end of its block.
+func readContract(ctx context.Context, caller *contracts.NoAARecoveryCaller, block common.Hash, e *data.RecoveryEvent) error {
+	opts := &bind.CallOpts{Context: ctx, BlockHash: block}
+	passport := common.Hash(e.PassportHash)
+
+	switch e.Type {
+	case data.EventRequested:
+		req, err := caller.GetRecoveryRequest(opts, passport)
+		if err != nil {
+			return err
+		}
+		// A request dropped later in the same block is gone.
+		if data.NumericFromBytes(req.NewIdentityKey).Equal(e.NewIdentityKey) && req.ReadyAt == uint64(e.ReadyAt.Unix()) {
+			e.OldIdentityKey, e.DGCommit = data.NumericFromBytes(req.OldIdentityKey), data.NewNumeric(req.DgCommit)
+		}
+	case data.EventContested, data.EventCancelled:
+		until, err := caller.LockedUntil(opts, passport)
+		if err != nil {
+			return err
+		}
+		e.LockedUntil = data.Time(until)
+	}
+	return nil
 }
 
 // save stores events, updates state and moves the checkpoint in one transaction.

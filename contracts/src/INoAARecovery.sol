@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// PROVISIONAL: assumed interface, the real contract does not exist yet.
+// The part of NoAARecovery the service and the mock rely on.
 interface INoAARecovery {
-    event RecoveryRequested(bytes32 indexed passportHash, uint256 newIdentityKey, uint64 readyAt);
-    event RecoveryCancelled(bytes32 indexed passportHash);
-    event RecoveryContested(bytes32 indexed passportHash, uint64 lockedUntil);
-    event RecoveryFinalized(bytes32 indexed passportHash, uint256 newIdentityKey);
-    event RecoveryLocked(bytes32 indexed passportHash);
-    event RecoveryUnlocked(bytes32 indexed passportHash);
+    struct RecoveryRequest {
+        bytes32 oldIdentityKey;
+        bytes32 newIdentityKey;
+        uint256 dgCommit;
+        uint64 readyAt;
+    }
 
-    function requests(bytes32 passportHash) external view returns (uint256 newIdentityKey, uint64 readyAt);
+    event RecoveryRequested(bytes32 passportHash, bytes32 newIdentityKey, uint256 readyAt);
+    event RecoveryContested(bytes32 passportHash, bytes32 pendingIdentityKey, bytes32 newIdentityKey);
+    event RecoveryCancelled(bytes32 passportHash, bytes32 pendingIdentityKey);
+    event RecoveryFinalized(bytes32 passportHash, bytes32 oldIdentityKey, bytes32 newIdentityKey);
+    event RecoveryLocked(bytes32 passportHash);
+    event RecoveryUnlocked(bytes32 passportHash);
 
-    function lockedUntil(bytes32 passportHash) external view returns (uint64);
+    function getRecoveryRequest(bytes32 passportHash_) external view returns (RecoveryRequest memory);
 
-    function finalizeRecovery(bytes32 passportHash) external;
+    function lockedUntil(bytes32 passportHash_) external view returns (uint64);
+
+    function finalizeRecovery(bytes32 passportHash_) external;
 }

@@ -11,8 +11,6 @@ $$ LANGUAGE plpgsql;
 -- +migrate StatementEnd
 
 CREATE TYPE recovery_event_type AS ENUM ('requested', 'cancelled', 'contested', 'finalized', 'locked', 'unlocked');
-CREATE TYPE recovery_status AS ENUM ('active', 'pending', 'contested', 'locked');
--- 'failed', 'rejected' and 'expired' do not block another attempt for the same request.
 CREATE TYPE finalizer_submission_status AS ENUM
     ('submitting', 'submitted', 'confirmed', 'failed', 'rejected', 'unknown', 'resolved', 'expired');
 
@@ -68,48 +66,54 @@ CREATE TABLE recovery_event
     log_index         INTEGER             NOT NULL CHECK (log_index >= 0),
     event_type        recovery_event_type NOT NULL,
     passport_hash     TEXT                NOT NULL CHECK (passport_hash ~ '^0x[0-9a-f]{64}$'),
+    old_identity_key  NUMERIC(78, 0) CHECK (old_identity_key > 0 AND old_identity_key < 2::NUMERIC ^ 256),
     new_identity_key  NUMERIC(78, 0) CHECK (new_identity_key > 0 AND new_identity_key < 2::NUMERIC ^ 256),
+    dg_commit         NUMERIC(78, 0) CHECK (dg_commit >= 0 AND dg_commit < 2::NUMERIC ^ 256),
     ready_at          TIMESTAMP(3),
     locked_until      TIMESTAMP(3),
     is_active         BOOLEAN             NOT NULL DEFAULT TRUE,
     created_at        TIMESTAMP(3)        NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
     updated_at        TIMESTAMP(3)        NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
 
-    CHECK ((new_identity_key IS NOT NULL) = (event_type IN ('requested', 'finalized'))),
+    CHECK ((new_identity_key IS NOT NULL) = (event_type = 'requested')),
     CHECK ((ready_at IS NOT NULL) = (event_type = 'requested')),
-    CHECK ((locked_until IS NOT NULL) = (event_type = 'contested'))
+    CHECK ((old_identity_key IS NULL) = (dg_commit IS NULL)),
+    CHECK (old_identity_key IS NULL OR event_type = 'requested'),
+    CHECK (locked_until IS NULL OR event_type IN ('contested', 'cancelled')),
+    CHECK (locked_until IS NOT NULL OR event_type <> 'contested')
 );
 
 CREATE INDEX recovery_event_contract_id_passport_hash_idx ON recovery_event (contract_id, passport_hash, event_type);
 CREATE INDEX recovery_event_transaction_id_idx ON recovery_event (transaction_id);
 CREATE UNIQUE INDEX recovery_event_transaction_id_log_index_idx ON recovery_event (transaction_id, log_index) WHERE is_active;
 
--- Derived from recovery_event (see `rebuild`). recovery_event_id is the last applied event.
 CREATE TABLE recovery_state
 (
-    recovery_state_id SERIAL PRIMARY KEY,
-    contract_id       INTEGER         NOT NULL REFERENCES contract (contract_id),
-    recovery_event_id INTEGER         NOT NULL REFERENCES recovery_event (recovery_event_id),
-    passport_hash     TEXT            NOT NULL CHECK (passport_hash ~ '^0x[0-9a-f]{64}$'),
-    status            recovery_status NOT NULL,
-    new_identity_key  NUMERIC(78, 0) CHECK (new_identity_key > 0 AND new_identity_key < 2::NUMERIC ^ 256),
-    ready_at          TIMESTAMP(3),
-    locked_until      TIMESTAMP(3),
-    is_active         BOOLEAN         NOT NULL DEFAULT TRUE,
-    created_at        TIMESTAMP(3)    NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
-    updated_at        TIMESTAMP(3)    NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+    recovery_state_id  SERIAL PRIMARY KEY,
+    contract_id        INTEGER      NOT NULL REFERENCES contract (contract_id),
+    recovery_event_id  INTEGER      NOT NULL REFERENCES recovery_event (recovery_event_id),
+    passport_hash      TEXT         NOT NULL CHECK (passport_hash ~ '^0x[0-9a-f]{64}$'),
+    old_identity_key   NUMERIC(78, 0) CHECK (old_identity_key > 0 AND old_identity_key < 2::NUMERIC ^ 256),
+    new_identity_key   NUMERIC(78, 0) CHECK (new_identity_key > 0 AND new_identity_key < 2::NUMERIC ^ 256),
+    dg_commit          NUMERIC(78, 0) CHECK (dg_commit >= 0 AND dg_commit < 2::NUMERIC ^ 256),
+    ready_at           TIMESTAMP(3),
+    locked_until       TIMESTAMP(3),
+    is_recovery_locked BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_active          BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at         TIMESTAMP(3) NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+    updated_at         TIMESTAMP(3) NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
 
     CHECK ((new_identity_key IS NULL) = (ready_at IS NULL)),
-    CHECK (status <> 'pending' OR (new_identity_key IS NOT NULL AND locked_until IS NULL)),
-    CHECK (status <> 'contested' OR (new_identity_key IS NULL AND locked_until IS NOT NULL)),
-    CHECK (status <> 'active' OR (new_identity_key IS NULL AND locked_until IS NULL))
+    CHECK ((old_identity_key IS NULL) = (dg_commit IS NULL)),
+    CHECK (old_identity_key IS NULL OR new_identity_key IS NOT NULL),
+    -- A lock drops the pending request.
+    CHECK (new_identity_key IS NULL OR NOT is_recovery_locked)
 );
 
 CREATE UNIQUE INDEX recovery_state_contract_id_passport_hash_idx ON recovery_state (contract_id, passport_hash) WHERE is_active;
 CREATE INDEX recovery_state_recovery_event_id_idx ON recovery_state (recovery_event_id);
-CREATE INDEX recovery_state_contract_id_status_ready_at_idx ON recovery_state (contract_id, status, ready_at);
+CREATE INDEX recovery_state_contract_id_ready_at_idx ON recovery_state (contract_id, ready_at);
 
--- One row per finalizeRecovery attempt.
 CREATE TABLE finalizer_submission
 (
     finalizer_submission_id SERIAL PRIMARY KEY,
@@ -137,20 +141,17 @@ CREATE TRIGGER recovery_event_set_updated_at BEFORE UPDATE ON recovery_event FOR
 CREATE TRIGGER recovery_state_set_updated_at BEFORE UPDATE ON recovery_state FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER finalizer_submission_set_updated_at BEFORE UPDATE ON finalizer_submission FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- A contest lock expires with time, so readers should use effective_status.
-CREATE VIEW recovery_state_effective AS
+CREATE VIEW recovery_state_detail AS
 SELECT s.recovery_state_id,
        c.chain_id,
        c.address,
        s.passport_hash,
-       s.status,
-       CASE
-           WHEN s.status = 'contested' AND s.locked_until <= NOW() AT TIME ZONE 'utc' THEN 'active'::recovery_status
-           ELSE s.status
-           END        AS effective_status,
+       s.old_identity_key,
        s.new_identity_key,
+       s.dg_commit,
        s.ready_at,
        s.locked_until,
+       s.is_recovery_locked,
        b.block_number AS updated_at_block,
        s.updated_at
 FROM recovery_state s
@@ -162,7 +163,7 @@ WHERE s.is_active;
 
 -- +migrate Down
 
-DROP VIEW recovery_state_effective;
+DROP VIEW recovery_state_detail;
 DROP TABLE finalizer_submission;
 DROP TABLE recovery_state;
 DROP TABLE recovery_event;
@@ -170,6 +171,5 @@ DROP TABLE contract;
 DROP TABLE transaction;
 DROP TABLE block;
 DROP TYPE finalizer_submission_status;
-DROP TYPE recovery_status;
 DROP TYPE recovery_event_type;
 DROP FUNCTION set_updated_at();

@@ -49,15 +49,15 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 	e := setup(t, 60, 600)
 	p1, p2, p3, p4 := passport(1), passport(2), passport(3), passport(4)
 
-	e.send(e.contract.RequestRecovery(e.auth, p1, big.NewInt(11)))
+	e.request(p1, 11)
 	e.mine(5)
-	e.send(e.contract.RequestRecovery(e.auth, p2, big.NewInt(22)))
-	e.send(e.contract.CancelRecovery(e.auth, p2))
+	e.request(p2, 22)
+	e.send(e.contract.CancelRecovery(e.auth, p2, nil))
 	e.mine(5)
-	e.send(e.contract.RequestRecovery(e.auth, p3, big.NewInt(33)))
-	e.send(e.contract.RequestRecovery(e.auth, p3, big.NewInt(34))) // contests
-	e.send(e.contract.RequestRecovery(e.auth, p4, big.NewInt(44)))
-	e.send(e.contract.LockRecovery(e.auth, p4))
+	e.request(p3, 33)
+	e.request(p3, 34) // contests
+	e.request(p4, 44)
+	e.send(e.contract.LockRecovery(e.auth, p4, nil))
 	finalized := e.finalize()
 
 	// Small chunks force many eth_getLogs ranges.
@@ -68,20 +68,24 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := len(e.events(cfg)); n != 7 {
-		t.Fatalf("events = %d, want 7", n)
+	// The lock also emits RecoveryCancelled for the dropped request.
+	if n := len(e.events(cfg)); n != 8 {
+		t.Fatalf("events = %d, want 8", n)
 	}
-	assertState(t, e.state(cfg, p1), data.StatusPending, 11)
-	assertState(t, e.state(cfg, p2), data.StatusActive, 0)
-	assertState(t, e.state(cfg, p3), data.StatusContested, 0)
-	assertState(t, e.state(cfg, p4), data.StatusLocked, 44)
-	if s := e.state(cfg, p3); s.LockedUntil == nil {
-		t.Error("contested state has no locked_until")
+	for _, p := range []common.Hash{p1, p2, p3, p4} {
+		e.assertOnChain(cfg, p)
+	}
+	assertState(t, e.state(cfg, p1), 11, false, false)
+	assertState(t, e.state(cfg, p2), 0, true, false)
+	assertState(t, e.state(cfg, p3), 0, true, false)
+	assertState(t, e.state(cfg, p4), 0, false, true)
+	if s := e.state(cfg, p1); s.DGCommit.Int64() != 1011 || s.OldIdentityKey.Int64() != 1 {
+		t.Errorf("state of p1 = %+v, want dg commit 1011, old identity key 1", s)
 	}
 
 	t.Run("restart from checkpoint", func(t *testing.T) {
 		checkpoint := e.checkpoint(cfg)
-		e.send(e.contract.CancelRecovery(e.auth, p1))
+		e.send(e.contract.CancelRecovery(e.auth, p1, nil))
 		finalized := e.finalize()
 
 		stop := runInBackground(indexer.New(cfg).Run)
@@ -93,10 +97,11 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 		if e.checkpoint(cfg) <= checkpoint {
 			t.Fatal("checkpoint did not advance")
 		}
-		if n := len(e.events(cfg)); n != 8 {
-			t.Fatalf("events = %d, want 8", n)
+		if n := len(e.events(cfg)); n != 9 {
+			t.Fatalf("events = %d, want 9", n)
 		}
-		assertState(t, e.state(cfg, p1), data.StatusActive, 0)
+		e.assertOnChain(cfg, p1)
+		assertState(t, e.state(cfg, p1), 0, true, false)
 	})
 
 	t.Run("re-indexing is idempotent", func(t *testing.T) {
@@ -111,12 +116,13 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if n := len(e.events(cfg)); n != 8 {
-			t.Fatalf("events = %d, want 8", n)
+		if n := len(e.events(cfg)); n != 9 {
+			t.Fatalf("events = %d, want 9", n)
 		}
 		// Stored events must not be applied again.
-		assertState(t, e.state(cfg, p1), data.StatusActive, 0)
-		assertState(t, e.state(cfg, p4), data.StatusLocked, 44)
+		for _, p := range []common.Hash{p1, p2, p3, p4} {
+			e.assertOnChain(cfg, p)
+		}
 	})
 
 	t.Run("rebuild from events", func(t *testing.T) {
@@ -124,7 +130,8 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 		for _, p := range []common.Hash{p1, p2, p3, p4} {
 			before[p] = e.state(cfg, p)
 		}
-		if err := cfg.DB().ExecRaw("UPDATE recovery_state SET status = 'active', new_identity_key = NULL, ready_at = NULL, locked_until = NULL"); err != nil {
+		if err := cfg.DB().ExecRaw("UPDATE recovery_state SET old_identity_key = NULL, new_identity_key = NULL, dg_commit = NULL, " +
+			"ready_at = NULL, locked_until = NULL, is_recovery_locked = FALSE"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -134,13 +141,55 @@ func TestIndexerBackfillRestartIdempotency(t *testing.T) {
 
 		for p, want := range before {
 			got := e.state(cfg, p)
-			if got.Status != want.Status || !got.NewIdentityKey.Equal(want.NewIdentityKey) ||
-				!sameTime(got.ReadyAt, want.ReadyAt) || !sameTime(got.LockedUntil, want.LockedUntil) ||
+			want.ID = got.ID
+			if !got.OldIdentityKey.Equal(want.OldIdentityKey) || !got.NewIdentityKey.Equal(want.NewIdentityKey) ||
+				!got.DGCommit.Equal(want.DGCommit) || !sameTime(got.ReadyAt, want.ReadyAt) ||
+				!sameTime(got.LockedUntil, want.LockedUntil) || got.IsRecoveryLocked != want.IsRecoveryLocked ||
 				got.RecoveryEventID != want.RecoveryEventID {
 				t.Errorf("state of %s = %+v, want %+v", p.Hex(), got, want)
 			}
 		}
 	})
+}
+
+// The request is dropped within its block, so its old identity key and dg commit cannot be read.
+func TestIndexerRequestContestedInSameBlock(t *testing.T) {
+	e := setup(t, 60, 600)
+	p := passport(1)
+
+	e.rpc("evm_setAutomine", false)
+	auth := *e.auth
+	auth.GasLimit = 500_000
+	var txs []*types.Transaction
+	for _, key := range []int64{11, 12} {
+		tx, err := e.contract.RequestRecovery(&auth, [32]byte{}, big.NewInt(key), big.NewInt(key+1000), p, [32]byte{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		txs = append(txs, tx)
+	}
+	e.rpc("evm_mine")
+	e.rpc("evm_setAutomine", true)
+	if e.wait(txs[0]).BlockNumber.Cmp(e.wait(txs[1]).BlockNumber) != 0 {
+		t.Fatal("transactions were mined in different blocks")
+	}
+	finalized := e.finalize()
+
+	cfg := e.config(nil, nil)
+	stop := runInBackground(indexer.New(cfg).Run)
+	eventually(t, 30*time.Second, func() bool { return e.checkpoint(cfg) >= finalized })
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	events := e.events(cfg)
+	if len(events) != 2 || events[0].Type != data.EventRequested || events[1].Type != data.EventContested {
+		t.Fatalf("events = %+v, want requested and contested", events)
+	}
+	if events[0].OldIdentityKey.Int != nil || events[0].DGCommit.Int != nil {
+		t.Errorf("requested event = %+v, want no old identity key and dg commit", events[0])
+	}
+	e.assertOnChain(cfg, p)
 }
 
 func TestIndexerHaltsOnParentHashMismatch(t *testing.T) {
@@ -151,7 +200,7 @@ func TestIndexerHaltsOnParentHashMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e.send(e.contract.RequestRecovery(e.auth, passport(1), big.NewInt(11)))
+	e.request(passport(1), 11)
 	finalized := e.finalize()
 
 	cfg := e.config(nil, nil)
@@ -163,7 +212,7 @@ func TestIndexerHaltsOnParentHashMismatch(t *testing.T) {
 
 	// Replace history below the checkpoint.
 	e.rpc("evm_revert", snapshot)
-	e.send(e.contract.RequestRecovery(e.auth, passport(2), big.NewInt(22)))
+	e.request(passport(2), 22)
 	e.mine(2 * finalityDepth)
 
 	ix := indexer.New(cfg)
@@ -186,10 +235,10 @@ func sameTime(a, b *time.Time) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && a.Equal(*b))
 }
 
-func assertState(t *testing.T, s data.RecoveryState, status data.Status, key int64) {
+func assertState(t *testing.T, s data.RecoveryState, key int64, lockedUntil, locked bool) {
 	t.Helper()
-	if s.Status != status || !s.NewIdentityKey.Equal(data.NewNumeric(big.NewInt(key))) {
-		t.Errorf("state of %s = %s/%v, want %s/%d", s.PassportHash.Hex(), s.Status, s.NewIdentityKey.Int, status, key)
+	if !s.NewIdentityKey.Equal(data.NewNumeric(big.NewInt(key))) || (s.LockedUntil != nil) != lockedUntil || s.IsRecoveryLocked != locked {
+		t.Errorf("state of %s = %+v, want key %d, locked until set %t, locked %t", s.PassportHash.Hex(), s, key, lockedUntil, locked)
 	}
 }
 

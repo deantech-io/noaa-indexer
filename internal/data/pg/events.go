@@ -43,9 +43,9 @@ func (q EventsQ) Insert(e *data.RecoveryEvent) (bool, error) {
 
 	err = q.db.Get(&e.ID, sq.Insert(eventTable).
 		Columns("contract_id", "transaction_id", "log_index", "event_type", "passport_hash",
-			"new_identity_key", "ready_at", "locked_until").
+			"old_identity_key", "new_identity_key", "dg_commit", "ready_at", "locked_until").
 		Values(q.contractID, txID, e.LogIndex, e.Type, e.PassportHash,
-			e.NewIdentityKey, e.ReadyAt, e.LockedUntil).
+			e.OldIdentityKey, e.NewIdentityKey, e.DGCommit, e.ReadyAt, e.LockedUntil).
 		Suffix("RETURNING recovery_event_id"))
 	return err == nil, err
 }
@@ -72,7 +72,8 @@ func (q EventsQ) LatestRequest(passportHash data.Hash) (*data.RecoveryEvent, err
 
 func (q EventsQ) selector() sq.SelectBuilder {
 	return sq.Select("e.recovery_event_id", "t.tx_hash", "e.log_index", "b.block_number", "b.block_hash",
-		"b.mined_at", "e.event_type", "e.passport_hash", "e.new_identity_key", "e.ready_at", "e.locked_until").
+		"b.mined_at", "e.event_type", "e.passport_hash", "e.old_identity_key", "e.new_identity_key", "e.dg_commit",
+		"e.ready_at", "e.locked_until").
 		From(eventTable + " e").
 		Join(transactionTable + " t ON t.transaction_id = e.transaction_id").
 		Join(blockTable + " b ON b.block_id = t.block_id").

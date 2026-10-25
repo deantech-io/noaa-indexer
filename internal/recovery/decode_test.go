@@ -18,13 +18,13 @@ func TestDecode(t *testing.T) {
 
 	passport := common.HexToHash("0xaa")
 	event := abi.Events["RecoveryRequested"]
-	body, err := event.Inputs.NonIndexed().Pack(big.NewInt(42), uint64(1000))
+	body, err := event.Inputs.Pack(passport, common.BigToHash(big.NewInt(42)), big.NewInt(1000))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	got, err := Decode(types.Log{
-		Topics:      []common.Hash{event.ID, passport},
+		Topics:      []common.Hash{event.ID},
 		Data:        body,
 		BlockNumber: 5,
 		Index:       3,

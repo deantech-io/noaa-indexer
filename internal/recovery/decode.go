@@ -32,7 +32,7 @@ func Topics() []common.Hash {
 	return res
 }
 
-// Decode converts a log into an event without MinedAt.
+// Decode converts a log into an event and the values read from the contract.
 func Decode(l types.Log) (data.RecoveryEvent, error) {
 	e := data.RecoveryEvent{
 		TxHash:      data.Hash(l.TxHash),
@@ -54,7 +54,10 @@ func Decode(l types.Log) (data.RecoveryEvent, error) {
 	case data.EventRequested:
 		var ev *contracts.NoAARecoveryRecoveryRequested
 		if ev, err = filterer.ParseRecoveryRequested(l); err == nil {
-			e.PassportHash, e.NewIdentityKey, e.ReadyAt = data.Hash(ev.PassportHash), data.NewNumeric(ev.NewIdentityKey), data.Time(ev.ReadyAt)
+			if !ev.ReadyAt.IsUint64() {
+				return e, errors.From(errors.New("readyAt out of range"), logan.F{"ready_at": ev.ReadyAt.String()})
+			}
+			e.PassportHash, e.NewIdentityKey, e.ReadyAt = data.Hash(ev.PassportHash), data.NumericFromBytes(ev.NewIdentityKey), data.Time(ev.ReadyAt.Uint64())
 		}
 	case data.EventCancelled:
 		var ev *contracts.NoAARecoveryRecoveryCancelled
@@ -64,12 +67,12 @@ func Decode(l types.Log) (data.RecoveryEvent, error) {
 	case data.EventContested:
 		var ev *contracts.NoAARecoveryRecoveryContested
 		if ev, err = filterer.ParseRecoveryContested(l); err == nil {
-			e.PassportHash, e.LockedUntil = data.Hash(ev.PassportHash), data.Time(ev.LockedUntil)
+			e.PassportHash = data.Hash(ev.PassportHash)
 		}
 	case data.EventFinalized:
 		var ev *contracts.NoAARecoveryRecoveryFinalized
 		if ev, err = filterer.ParseRecoveryFinalized(l); err == nil {
-			e.PassportHash, e.NewIdentityKey = data.Hash(ev.PassportHash), data.NewNumeric(ev.NewIdentityKey)
+			e.PassportHash = data.Hash(ev.PassportHash)
 		}
 	case data.EventLocked:
 		var ev *contracts.NoAARecoveryRecoveryLocked

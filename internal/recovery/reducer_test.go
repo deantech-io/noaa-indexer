@@ -9,15 +9,27 @@ import (
 )
 
 func requested(key int64, readyAt uint64) data.RecoveryEvent {
-	return data.RecoveryEvent{Type: data.EventRequested, NewIdentityKey: data.NewNumeric(big.NewInt(key)), ReadyAt: data.Time(readyAt)}
+	return data.RecoveryEvent{
+		Type:           data.EventRequested,
+		OldIdentityKey: data.NewNumeric(big.NewInt(1)),
+		NewIdentityKey: data.NewNumeric(big.NewInt(key)),
+		DGCommit:       data.NewNumeric(big.NewInt(5)),
+		ReadyAt:        data.Time(readyAt),
+	}
 }
 
-func contested(lockedUntil uint64) data.RecoveryEvent {
-	return data.RecoveryEvent{Type: data.EventContested, LockedUntil: data.Time(lockedUntil)}
+// dropping is a contest or a cancel with the lockedUntil read after it.
+func dropping(t data.EventType, lockedUntil uint64) data.RecoveryEvent {
+	return data.RecoveryEvent{Type: t, LockedUntil: data.Time(lockedUntil)}
 }
 
 func ev(t data.EventType) data.RecoveryEvent {
 	return data.RecoveryEvent{Type: t}
+}
+
+func at(e data.RecoveryEvent, minedAt int64) data.RecoveryEvent {
+	e.MinedAt = time.Unix(minedAt, 0).UTC()
+	return e
 }
 
 func unix(t *time.Time) uint64 {
@@ -31,23 +43,17 @@ func TestApply(t *testing.T) {
 	tests := []struct {
 		name        string
 		events      []data.RecoveryEvent
-		status      data.Status
 		key         int64
 		readyAt     uint64
 		lockedUntil uint64
+		locked      bool
 	}{
-		{"request", []data.RecoveryEvent{requested(7, 100)}, data.StatusPending, 7, 100, 0},
-		{"cancel", []data.RecoveryEvent{requested(7, 100), ev(data.EventCancelled)}, data.StatusActive, 0, 0, 0},
-		{"finalize", []data.RecoveryEvent{requested(7, 100), ev(data.EventFinalized)}, data.StatusActive, 0, 0, 0},
-		{"contest", []data.RecoveryEvent{requested(7, 100), contested(500)}, data.StatusContested, 0, 0, 500},
-		{"request after contest lock", []data.RecoveryEvent{requested(7, 100), contested(500), requested(9, 600)}, data.StatusPending, 9, 600, 0},
-		{"lock active", []data.RecoveryEvent{ev(data.EventLocked)}, data.StatusLocked, 0, 0, 0},
-		{"unlock active", []data.RecoveryEvent{ev(data.EventLocked), ev(data.EventUnlocked)}, data.StatusActive, 0, 0, 0},
-		{"lock keeps request", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked)}, data.StatusLocked, 7, 100, 0},
-		{"unlock restores request", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked), ev(data.EventUnlocked)}, data.StatusPending, 7, 100, 0},
-		{"unlock restores contest", []data.RecoveryEvent{requested(7, 100), contested(500), ev(data.EventLocked), ev(data.EventUnlocked)}, data.StatusContested, 0, 0, 500},
-		{"cancel while locked", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked), ev(data.EventCancelled)}, data.StatusLocked, 0, 0, 0},
-		{"unexpected finalize on empty state", []data.RecoveryEvent{ev(data.EventFinalized)}, data.StatusActive, 0, 0, 0},
+		{"request", []data.RecoveryEvent{requested(7, 100)}, 7, 100, 0, false},
+		{"cancel", []data.RecoveryEvent{requested(7, 100), dropping(data.EventCancelled, 500)}, 0, 0, 500, false},
+		{"contest", []data.RecoveryEvent{requested(7, 100), dropping(data.EventContested, 500)}, 0, 0, 500, false},
+		{"request after contest lock", []data.RecoveryEvent{requested(7, 100), dropping(data.EventContested, 500), requested(9, 600)}, 9, 600, 500, false},
+		{"lock drops request", []data.RecoveryEvent{requested(7, 100), dropping(data.EventCancelled, 0), ev(data.EventLocked)}, 0, 0, 0, true},
+		{"unlock keeps locked until", []data.RecoveryEvent{requested(7, 100), dropping(data.EventContested, 500), ev(data.EventLocked), ev(data.EventUnlocked)}, 0, 0, 500, false},
 	}
 
 	for _, tt := range tests {
@@ -58,17 +64,20 @@ func TestApply(t *testing.T) {
 				s = Apply(s, e)
 			}
 
-			if s.Status != tt.status {
-				t.Errorf("status = %s, want %s", s.Status, tt.status)
-			}
 			if !s.NewIdentityKey.Equal(data.NewNumeric(big.NewInt(tt.key))) {
 				t.Errorf("new identity key = %v, want %d", s.NewIdentityKey.Int, tt.key)
+			}
+			if pending := tt.key != 0; pending != (s.OldIdentityKey.Int != nil && s.DGCommit.Int != nil) {
+				t.Errorf("old identity key = %v, dg commit = %v, want them set only with a request", s.OldIdentityKey.Int, s.DGCommit.Int)
 			}
 			if unix(s.ReadyAt) != tt.readyAt {
 				t.Errorf("ready at = %d, want %d", unix(s.ReadyAt), tt.readyAt)
 			}
 			if unix(s.LockedUntil) != tt.lockedUntil {
 				t.Errorf("locked until = %d, want %d", unix(s.LockedUntil), tt.lockedUntil)
+			}
+			if s.IsRecoveryLocked != tt.locked {
+				t.Errorf("is recovery locked = %t, want %t", s.IsRecoveryLocked, tt.locked)
 			}
 			if s.RecoveryEventID != int64(len(tt.events)) {
 				t.Errorf("recovery event id = %d, want %d", s.RecoveryEventID, len(tt.events))
@@ -84,19 +93,13 @@ func TestExpected(t *testing.T) {
 		event  data.RecoveryEvent
 		want   bool
 	}{
-		{"request", nil, requested(7, 100), true},
-		{"request while pending", []data.RecoveryEvent{requested(7, 100)}, requested(8, 100), false},
-		{"request while locked", []data.RecoveryEvent{ev(data.EventLocked)}, requested(7, 100), false},
-		{"request after contest", []data.RecoveryEvent{requested(7, 100), contested(500)}, requested(9, 600), true},
-		{"contest", []data.RecoveryEvent{requested(7, 100)}, contested(500), true},
-		{"contest without request", nil, contested(500), false},
-		{"finalize", []data.RecoveryEvent{requested(7, 100)}, ev(data.EventFinalized), true},
-		{"finalize without request", nil, ev(data.EventFinalized), false},
-		{"finalize while locked", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked)}, ev(data.EventFinalized), false},
-		{"cancel while locked", []data.RecoveryEvent{requested(7, 100), ev(data.EventLocked)}, ev(data.EventCancelled), true},
-		{"cancel without request", nil, ev(data.EventCancelled), false},
+		{"request while pending", []data.RecoveryEvent{requested(7, 100)}, at(requested(8, 100), 40), false},
+		{"request while locked", []data.RecoveryEvent{ev(data.EventLocked)}, at(requested(7, 100), 40), false},
+		{"request before locked until", []data.RecoveryEvent{dropping(data.EventCancelled, 500)}, at(requested(7, 600), 499), false},
+		{"request at locked until", []data.RecoveryEvent{dropping(data.EventCancelled, 500)}, at(requested(7, 600), 500), true},
+		{"finalize before ready", []data.RecoveryEvent{requested(7, 100)}, at(ev(data.EventFinalized), 99), false},
+		{"cancel without request", nil, dropping(data.EventCancelled, 500), false},
 		{"lock twice", []data.RecoveryEvent{ev(data.EventLocked)}, ev(data.EventLocked), false},
-		{"unlock", []data.RecoveryEvent{ev(data.EventLocked)}, ev(data.EventUnlocked), true},
 		{"unlock without lock", nil, ev(data.EventUnlocked), false},
 	}
 

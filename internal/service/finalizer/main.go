@@ -2,7 +2,6 @@ package finalizer
 
 import (
 	"context"
-	"math/big"
 	"slices"
 	"time"
 
@@ -201,24 +200,15 @@ func (f *Finalizer) finalize(ctx context.Context, s data.RecoveryState, now time
 	}
 }
 
+// isCurrent reports whether the indexed request is still pending on chain and ready at now.
 func (f *Finalizer) isCurrent(ctx context.Context, s data.RecoveryState, now time.Time) (bool, error) {
-	var (
-		request struct {
-			NewIdentityKey *big.Int
-			ReadyAt        uint64
-		}
-		lockedUntil uint64
-	)
+	var request contracts.NoAARecoveryRecoveryRequest
 	err := f.client.Do(ctx, func(ctx context.Context, ec *ethclient.Client) error {
 		caller, err := contracts.NewNoAARecoveryCaller(f.contract, ec)
 		if err != nil {
 			return err
 		}
-		opts := &bind.CallOpts{Context: ctx}
-		if request, err = caller.Requests(opts, s.PassportHash); err != nil {
-			return err
-		}
-		lockedUntil, err = caller.LockedUntil(opts, s.PassportHash)
+		request, err = caller.GetRecoveryRequest(&bind.CallOpts{Context: ctx}, s.PassportHash)
 		return err
 	})
 	if err != nil {
@@ -226,9 +216,8 @@ func (f *Finalizer) isCurrent(ctx context.Context, s data.RecoveryState, now tim
 	}
 
 	readyAt := data.Time(request.ReadyAt)
-	return !s.NewIdentityKey.IsZero() && data.NewNumeric(request.NewIdentityKey).Equal(s.NewIdentityKey) &&
-		readyAt != nil && s.ReadyAt != nil && readyAt.Equal(*s.ReadyAt) && !readyAt.After(now) &&
-		lockedUntil <= uint64(now.Unix()), nil
+	return !s.NewIdentityKey.IsZero() && data.NumericFromBytes(request.NewIdentityKey).Equal(s.NewIdentityKey) &&
+		readyAt != nil && s.ReadyAt != nil && readyAt.Equal(*s.ReadyAt) && !readyAt.After(now), nil
 }
 
 func (f *Finalizer) track(ctx context.Context) error {
